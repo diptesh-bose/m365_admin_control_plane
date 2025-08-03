@@ -1,12 +1,19 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useCallback } from 'react';
 import { PolicyTable } from '../components/Policies/PolicyTable';
+import PolicyConfigurationTable from '../components/Policies/PolicyConfigurationTable';
 import { PolicyFilters } from '../components/Policies/PolicyFilters';
 import { PolicyBackup } from '../components/Policies/PolicyBackup';
 import { useGraphData } from '../hooks/useGraphData';
-import { Plus, Import, RefreshCw, AlertTriangle, Database } from 'lucide-react';
+import { graphService } from '../services/graphService';
+import { DeviceConfigurationPolicy, SettingsCatalogPolicy, DeviceCompliancePolicy } from '../types';
+import { Plus, Import, RefreshCw, AlertTriangle, Database, Shield, Settings } from 'lucide-react';
 
 export const Policies: React.FC = () => {
   const { policies, loading, error, fetchData, refreshData } = useGraphData();
+  const [activeTab, setActiveTab] = useState<'conditional-access' | 'device-configuration'>('conditional-access');
+  const [configurationPolicies, setConfigurationPolicies] = useState<(DeviceConfigurationPolicy | SettingsCatalogPolicy | DeviceCompliancePolicy)[]>([]);
+  const [configurationLoading, setConfigurationLoading] = useState(false);
+  const [configurationError, setConfigurationError] = useState<string | null>(null);
   const [filters, setFilters] = useState<{
     type: string[];
     status: string[];
@@ -23,17 +30,84 @@ export const Policies: React.FC = () => {
   const [pageSize, setPageSize] = useState(50);
   const [showBackupModal, setShowBackupModal] = useState(false);
 
+  const fetchDeviceConfigurationPolicies = useCallback(async () => {
+    setConfigurationLoading(true);
+    setConfigurationError(null);
+    try {
+      console.log('🔍 Fetching all device configuration policies...');
+      
+      // Use the comprehensive method that queries all endpoints
+      const allPolicies = await graphService.getSettingsCatalogPolicies();
+      
+      console.log('📊 All Policies Retrieved:', allPolicies);
+      console.log('📈 Total Policies Count:', allPolicies.length);
+      
+      if (allPolicies.length > 0) {
+        console.log('✅ Setting configuration policies:', allPolicies);
+        setConfigurationPolicies(allPolicies);
+      } else {
+        console.log('⚠️ No policies found - testing basic connectivity...');
+        // await testBasicConnectivity();
+      }
+    } catch (err) {
+      console.error('❌ Error fetching configuration policies:', err);
+      setConfigurationError(err instanceof Error ? err.message : 'Failed to fetch configuration policies');
+    } finally {
+      setConfigurationLoading(false);
+    }
+  }, []);
+
   useEffect(() => {
     if (policies.length === 0) {
       fetchData();
     }
   }, [fetchData, policies.length]);
 
+  useEffect(() => {
+    console.log('Policies useEffect triggered. ActiveTab:', activeTab, 'ConfigurationPolicies length:', configurationPolicies.length);
+    
+    if (activeTab === 'device-configuration' && configurationPolicies.length === 0) {
+      console.log('Conditions met, calling fetchDeviceConfigurationPolicies...');
+      fetchDeviceConfigurationPolicies();
+    }
+  }, [activeTab, configurationPolicies.length, fetchDeviceConfigurationPolicies]);
+
+  const testBasicConnectivity = async () => {
+    try {
+      console.log('Testing basic Graph API connectivity...');
+      
+      // Test a simple endpoint first
+      const response = await graphService.getUsers(5);
+      console.log('Basic API test - Users response:', response);
+      
+      // Test organization info
+      const orgInfo = await graphService.getOrganizationInfo();
+      console.log('Organization info:', orgInfo);
+      
+    } catch (error) {
+      console.error('Basic connectivity test failed:', error);
+    }
+  };
+
+  const handlePolicyAction = (policyId: string, action: string) => {
+    // Handle policy actions like edit, delete, duplicate, etc.
+    console.log(`Policy ${policyId}: ${action}`);
+  };
+
   const filteredPolicies = useMemo(() => {
     return policies.filter(policy => {
       const matchesType = filters.type.length === 0 || filters.type.includes(policy.type);
       const matchesStatus = filters.status.length === 0 || filters.status.includes(policy.status);
-      const matchesPriority = filters.priority.length === 0 || filters.priority.includes(policy.priority);
+      
+      // Handle priority range filtering
+      const matchesPriority = filters.priority.length === 0 || filters.priority.some(priorityRange => {
+        if (priorityRange === 'none') return policy.priority === null;
+        if (priorityRange === 'high') return policy.priority !== null && policy.priority <= 10;
+        if (priorityRange === 'medium') return policy.priority !== null && policy.priority > 10 && policy.priority <= 50;
+        if (priorityRange === 'low') return policy.priority !== null && policy.priority > 50 && policy.priority <= 100;
+        return false;
+      });
+      
       const matchesSearch = filters.search === '' || 
         policy.name.toLowerCase().includes(filters.search.toLowerCase()) ||
         policy.description.toLowerCase().includes(filters.search.toLowerCase());
@@ -49,6 +123,14 @@ export const Policies: React.FC = () => {
   }, [filteredPolicies, currentPage, pageSize]);
 
   const totalPages = Math.ceil(filteredPolicies.length / pageSize);
+
+  const handleRefresh = () => {
+    if (activeTab === 'conditional-access') {
+      refreshData();
+    } else {
+      fetchDeviceConfigurationPolicies();
+    }
+  };
 
   const handleBackupCreated = () => {
     // Optionally refresh data or show success message
@@ -94,11 +176,21 @@ export const Policies: React.FC = () => {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold text-gray-900">Policy Management</h1>
-          <p className="text-gray-600">Real-time policies from your Microsoft 365 tenant</p>
+          <p className="text-gray-600">Manage your organization's security and device configuration policies</p>
         </div>
         <div className="flex items-center space-x-3">
           <button
-            onClick={refreshData}
+            onClick={() => {
+              console.log('Manual test button clicked');
+              testBasicConnectivity();
+              fetchDeviceConfigurationPolicies();
+            }}
+            className="flex items-center space-x-2 px-4 py-2 text-sm font-medium text-red-700 bg-red-100 border border-red-300 rounded-lg hover:bg-red-200"
+          >
+            <span>Test API</span>
+          </button>
+          <button
+            onClick={handleRefresh}
             className="flex items-center space-x-2 px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50"
           >
             <RefreshCw className="w-4 h-4" />
@@ -122,19 +214,50 @@ export const Policies: React.FC = () => {
         </div>
       </div>
 
-      {policies.length === 0 ? (
-        <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-6 text-center">
-          <AlertTriangle className="w-12 h-12 text-yellow-600 mx-auto mb-4" />
-          <h3 className="text-lg font-medium text-yellow-900 mb-2">No Policies Found</h3>
-          <p className="text-yellow-700">
-            No policies were found in your tenant, or you may need additional permissions to view them.
-          </p>
-        </div>
-      ) : (
+      {/* Tab Navigation */}
+      <div className="border-b border-gray-200">
+        <nav className="-mb-px flex space-x-8">
+          <button
+            onClick={() => setActiveTab('conditional-access')}
+            className={`py-2 px-1 border-b-2 font-medium text-sm ${
+              activeTab === 'conditional-access'
+                ? 'border-blue-500 text-blue-600'
+                : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+            }`}
+          >
+            <Shield className="w-4 h-4 inline mr-2" />
+            Conditional Access
+          </button>
+          <button
+            onClick={() => setActiveTab('device-configuration')}
+            className={`py-2 px-1 border-b-2 font-medium text-sm ${
+              activeTab === 'device-configuration'
+                ? 'border-blue-500 text-blue-600'
+                : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+            }`}
+          >
+            <Settings className="w-4 h-4 inline mr-2" />
+            Device Configuration
+          </button>
+        </nav>
+      </div>
+
+      {/* Content based on active tab */}
+      {activeTab === 'conditional-access' ? (
         <>
-          <PolicyFilters filters={filters} onFiltersChange={setFilters} />
-          
-          <PolicyTable policies={paginatedPolicies} onPolicySelect={handlePolicySelect} />
+          {policies.length === 0 ? (
+            <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-6 text-center">
+              <AlertTriangle className="w-12 h-12 text-yellow-600 mx-auto mb-4" />
+              <h3 className="text-lg font-medium text-yellow-900 mb-2">No Policies Found</h3>
+              <p className="text-yellow-700">
+                No policies were found in your tenant, or you may need additional permissions to view them.
+              </p>
+            </div>
+          ) : (
+            <>
+              <PolicyFilters filters={filters} onFiltersChange={setFilters} />
+              
+              <PolicyTable policies={paginatedPolicies} onPolicySelect={handlePolicySelect} />
 
           <div className="flex items-center justify-between bg-white rounded-lg p-4 shadow-sm border border-gray-200">
             <div className="flex items-center space-x-4">
@@ -188,6 +311,51 @@ export const Policies: React.FC = () => {
                 Next
               </button>
             </div>
+          </div>
+        </>
+      )}
+        </>
+      ) : (
+        <>
+          {/* Error State for Device Configuration */}
+          {configurationError && (
+            <div className="bg-red-50 border border-red-200 rounded-lg p-4 mb-4">
+              <div className="flex items-center">
+                <AlertTriangle className="w-5 h-5 text-red-500 mr-2" />
+                <span className="text-red-700">Error loading configuration policies: {configurationError}</span>
+              </div>
+            </div>
+          )}
+
+          {/* Device Configuration Controls */}
+          <div className="bg-white rounded-lg shadow-sm border mb-4">
+            <div className="px-6 py-4 border-b border-gray-200">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h3 className="text-lg font-semibold text-gray-900">Device Configuration Policies</h3>
+                  <p className="text-sm text-gray-600">Manage device settings and compliance policies across all policy types</p>
+                </div>
+                <div className="flex space-x-2">
+                  <button
+                    onClick={fetchDeviceConfigurationPolicies}
+                    disabled={configurationLoading}
+                    className="inline-flex items-center px-4 py-2 text-sm font-medium text-white bg-blue-600 border border-transparent rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50"
+                  >
+                    <RefreshCw className={`w-4 h-4 mr-2 ${configurationLoading ? 'animate-spin' : ''}`} />
+                    {configurationLoading ? 'Refreshing...' : 'Refresh Policies'}
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Device Configuration Policy Table */}
+          <div className="bg-white rounded-lg shadow-sm">
+            <PolicyConfigurationTable
+              policies={configurationPolicies}
+              loading={configurationLoading}
+              onPolicyAction={handlePolicyAction}
+            />
           </div>
         </>
       )}

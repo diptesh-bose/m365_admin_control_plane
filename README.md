@@ -9,9 +9,11 @@ A comprehensive Microsoft 365 administration portal built with React, TypeScript
 - **Dashboard Analytics** - Real-time tenant metrics and KPIs
 - **Policy Management** - Conditional Access, Device Compliance, and Security policies
 - **User Administration** - User directory management and role assignments
+- **Device Management** - Intune-enrolled device monitoring and remote actions
+- **App Management** - Mobile application deployment and assignment tracking
 - **Security Monitoring** - Real-time alerts and threat detection
 - **Audit & Compliance** - Activity logs and compliance reporting
-- **Reports & Analytics** - Comprehensive reporting with data visualization
+- **Reports & Analytics** - Comprehensive reporting with data visualization including Intune metrics
 
 ### Technical Features
 - **Modern UI/UX** - Built with Tailwind CSS and Lucide icons
@@ -82,6 +84,11 @@ Microsoft Graph API:
 ├── Policy.ReadWrite.ConditionalAccess
 ├── DeviceManagementConfiguration.Read.All
 ├── DeviceManagementConfiguration.ReadWrite.All
+├── DeviceManagementApps.Read.All
+├── DeviceManagementApps.ReadWrite.All
+├── DeviceManagementManagedDevices.Read.All
+├── DeviceManagementManagedDevices.ReadWrite.All
+├── DeviceManagementManagedDevices.PrivilegedOperations.All
 ├── SecurityEvents.Read.All
 ├── AuditLog.Read.All
 └── Reports.Read.All
@@ -121,9 +128,11 @@ src/
 │   └── useGraphData.ts     # Microsoft Graph data hook
 ├── pages/                  # Page components
 │   ├── Activity.tsx        # Activity logs page
+│   ├── Apps.tsx           # Intune app management page
 │   ├── Dashboard.tsx       # Main dashboard
+│   ├── Devices.tsx        # Intune device management page
 │   ├── Policies.tsx        # Policy management page
-│   ├── Reports.tsx         # Reports page
+│   ├── Reports.tsx         # Reports page with Intune analytics
 │   ├── Settings.tsx        # Settings page
 │   └── Users.tsx           # User management page
 ├── services/               # API services
@@ -133,6 +142,47 @@ src/
 └── data/                   # Development data
     └── mockData.ts         # Mock data for development
 ```
+
+## 📱 Microsoft Intune Integration
+
+The application now includes comprehensive Microsoft Intune integration for mobile device and application management.
+
+### **Device Management Features**
+- **Device Inventory** - Complete view of all Intune-enrolled devices
+- **Compliance Monitoring** - Real-time device compliance status tracking
+- **Remote Actions** - Device sync, lock, wipe, retire, and passcode reset
+- **Platform Support** - Windows, iOS, Android, and macOS devices
+- **Connectivity Status** - Online/offline device monitoring
+
+### **Application Management Features**
+- **App Catalog** - Comprehensive mobile application inventory
+- **Assignment Tracking** - Monitor app assignments to users and groups
+- **Installation Status** - Track app installation success/failure rates
+- **Publishing States** - Monitor app publishing workflow status
+- **Featured Apps** - Highlight important applications
+
+### **Reporting & Analytics**
+- **Compliance Reports** - Device compliance overview with detailed metrics
+- **Platform Distribution** - Visual breakdown of device platforms
+- **Installation Metrics** - App installation success rates and trends
+- **Activity Tracking** - Recent device and app management activities
+
+### **Remote Device Actions**
+The following remote actions are supported:
+- **Sync Device** - Force policy and app sync
+- **Lock Device** - Remotely lock a lost or stolen device
+- **Reset Passcode** - Force passcode reset on managed devices
+- **Retire Device** - Remove corporate data while preserving personal data
+- **Wipe Device** - Complete device factory reset (with confirmation)
+
+### **Intune API Endpoints Used**
+- `GET /deviceManagement/managedDevices` - Device inventory
+- `GET /deviceManagement/mobileApps` - Application catalog
+- `POST /deviceManagement/managedDevices/{id}/sync` - Device sync
+- `POST /deviceManagement/managedDevices/{id}/remoteLock` - Remote lock
+- `POST /deviceManagement/managedDevices/{id}/resetPasscode` - Passcode reset
+- `POST /deviceManagement/managedDevices/{id}/retire` - Device retirement
+- `POST /deviceManagement/managedDevices/{id}/wipe` - Device wipe
 
 ## 🔒 Security & Permissions
 
@@ -176,11 +226,27 @@ The application requires extensive Microsoft Graph permissions to function prope
 - Security alert monitoring
 - User activity insights
 
-### 3. **Policy Management**
-- Conditional Access policies
-- Device compliance rules
-- Security configurations
-- Bulk policy operations
+### Policy Management
+- **Conditional Access policies**
+- **Device compliance rules** 
+- **Security configurations**
+- **Bulk policy operations**
+- **Policy backup and restore** with calendar controls and audit trail
+- **Smart filtering** with Graph API-aligned values and priority ranges
+- **Conditional UI** that adapts based on available policy data
+
+#### Policy Status Values
+The application displays **actual Microsoft Graph API values** for policy status:
+- **On** - `enabled` (policy is active and enforced)
+- **Off** - `disabled` (policy is inactive)  
+- **Report Only** - `enabledForReportingButNotEnforced` (monitoring mode)
+
+#### Policy Types and Priority
+- **Type**: Displays actual policy categories (Conditional Access, Device Compliance, etc.)
+- **Priority**: Shows numeric priority values from the API when available
+  - Conditional Access policies don't have priority (column hidden when only CA policies)
+  - Device/App policies show numeric values (1-100, lower numbers = higher priority)
+  - Priority filtering supports ranges: High (1-10), Medium (11-50), Low (51-100), No Priority
 
 ### 4. **User Administration**
 - User directory browsing

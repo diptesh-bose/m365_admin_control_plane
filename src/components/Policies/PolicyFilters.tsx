@@ -8,12 +8,26 @@ interface PolicyFiltersProps {
     priority: string[];
     search: string;
   };
-  onFiltersChange: (filters: any) => void;
+  onFiltersChange: (filters: {
+    type: string[];
+    status: string[];
+    priority: string[];
+    search: string;
+  }) => void;
 }
 
-const policyTypes = ['Security', 'Compliance', 'Device', 'App', 'Data', 'Identity'];
-const statuses = ['Active', 'Inactive', 'Pending', 'Draft'];
-const priorities = ['Critical', 'High', 'Medium', 'Low'];
+const policyTypes = ['Conditional Access', 'Device Compliance', 'Device Configuration', 'App Protection', 'Security', 'Compliance'];
+const statuses = [
+  { value: 'enabled', label: 'On' },
+  { value: 'disabled', label: 'Off' },
+  { value: 'enabledForReportingButNotEnforced', label: 'Report Only' }
+];
+const priorityRanges = [
+  { value: 'high', label: 'High (1-10)' },
+  { value: 'medium', label: 'Medium (11-50)' },
+  { value: 'low', label: 'Low (51-100)' },
+  { value: 'none', label: 'No Priority' }
+];
 
 export const PolicyFilters: React.FC<PolicyFiltersProps> = ({ filters, onFiltersChange }) => {
   const updateFilter = (key: string, value: string) => {
@@ -88,32 +102,32 @@ export const PolicyFilters: React.FC<PolicyFiltersProps> = ({ filters, onFilters
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-2">Status</label>
           <div className="space-y-2">
-            {statuses.map(status => (
-              <label key={status} className="flex items-center">
+            {statuses.map(statusItem => (
+              <label key={statusItem.value} className="flex items-center">
                 <input
                   type="checkbox"
-                  checked={filters.status.includes(status)}
-                  onChange={() => updateFilter('status', status)}
+                  checked={filters.status.includes(statusItem.value)}
+                  onChange={() => updateFilter('status', statusItem.value)}
                   className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
                 />
-                <span className="ml-2 text-sm text-gray-700">{status}</span>
+                <span className="ml-2 text-sm text-gray-700">{statusItem.label}</span>
               </label>
             ))}
           </div>
         </div>
 
         <div>
-          <label className="block text-sm font-medium text-gray-700 mb-2">Priority</label>
+          <label className="block text-sm font-medium text-gray-700 mb-2">Priority Range</label>
           <div className="space-y-2">
-            {priorities.map(priority => (
-              <label key={priority} className="flex items-center">
+            {priorityRanges.map(priorityRange => (
+              <label key={priorityRange.value} className="flex items-center">
                 <input
                   type="checkbox"
-                  checked={filters.priority.includes(priority)}
-                  onChange={() => updateFilter('priority', priority)}
+                  checked={filters.priority.includes(priorityRange.value)}
+                  onChange={() => updateFilter('priority', priorityRange.value)}
                   className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
                 />
-                <span className="ml-2 text-sm text-gray-700">{priority}</span>
+                <span className="ml-2 text-sm text-gray-700">{priorityRange.label}</span>
               </label>
             ))}
           </div>

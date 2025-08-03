@@ -9,23 +9,32 @@ interface PolicyTableProps {
 }
 
 const statusColors = {
-  Active: 'bg-green-100 text-green-800',
-  Inactive: 'bg-gray-100 text-gray-800',
-  Pending: 'bg-yellow-100 text-yellow-800',
-  Draft: 'bg-blue-100 text-blue-800'
+  enabled: 'bg-green-100 text-green-800',
+  disabled: 'bg-gray-100 text-gray-800',
+  enabledForReportingButNotEnforced: 'bg-yellow-100 text-yellow-800'
 };
 
-const priorityColors = {
-  Critical: 'bg-red-100 text-red-800',
-  High: 'bg-orange-100 text-orange-800',
-  Medium: 'bg-yellow-100 text-yellow-800',
-  Low: 'bg-green-100 text-green-800'
+const statusLabels = {
+  enabled: 'On',
+  disabled: 'Off', 
+  enabledForReportingButNotEnforced: 'Report Only'
+};
+
+const getPriorityColor = (priority: number | null) => {
+  if (priority === null) return 'bg-gray-100 text-gray-800';
+  if (priority <= 10) return 'bg-red-100 text-red-800';
+  if (priority <= 50) return 'bg-orange-100 text-orange-800';
+  if (priority <= 100) return 'bg-yellow-100 text-yellow-800';
+  return 'bg-green-100 text-green-800';
 };
 
 export const PolicyTable: React.FC<PolicyTableProps> = ({ policies, onPolicySelect }) => {
   const [selectedPolicies, setSelectedPolicies] = useState<Set<string>>(new Set());
   const [sortField, setSortField] = useState<keyof Policy>('lastModified');
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc');
+
+  // Check if any policies have priority values to determine if we should show the column
+  const hasPriorityPolicies = policies.some(policy => policy.priority !== null);
 
   const handleSort = (field: keyof Policy) => {
     if (sortField === field) {
@@ -39,6 +48,11 @@ export const PolicyTable: React.FC<PolicyTableProps> = ({ policies, onPolicySele
   const sortedPolicies = [...policies].sort((a, b) => {
     const aValue = a[sortField];
     const bValue = b[sortField];
+    
+    // Handle null values in sorting
+    if (aValue === null && bValue === null) return 0;
+    if (aValue === null) return sortDirection === 'asc' ? -1 : 1;
+    if (bValue === null) return sortDirection === 'asc' ? 1 : -1;
     
     if (aValue < bValue) return sortDirection === 'asc' ? -1 : 1;
     if (aValue > bValue) return sortDirection === 'asc' ? 1 : -1;
@@ -114,9 +128,11 @@ export const PolicyTable: React.FC<PolicyTableProps> = ({ policies, onPolicySele
               <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                 Status
               </th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                Priority
-              </th>
+              {hasPriorityPolicies && (
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  Priority
+                </th>
+              )}
               <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                 <button
                   onClick={() => handleSort('lastModified')}
@@ -165,14 +181,16 @@ export const PolicyTable: React.FC<PolicyTableProps> = ({ policies, onPolicySele
                 </td>
                 <td className="px-6 py-4">
                   <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${statusColors[policy.status]}`}>
-                    {policy.status}
+                    {statusLabels[policy.status]}
                   </span>
                 </td>
-                <td className="px-6 py-4">
-                  <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${priorityColors[policy.priority]}`}>
-                    {policy.priority}
-                  </span>
-                </td>
+                {hasPriorityPolicies && (
+                  <td className="px-6 py-4">
+                    <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${getPriorityColor(policy.priority)}`}>
+                      {policy.priority !== null ? policy.priority : 'N/A'}
+                    </span>
+                  </td>
+                )}
                 <td className="px-6 py-4 text-sm text-gray-500">
                   <div className="flex flex-col">
                     <span>{format(policy.lastModified, 'MMM d, yyyy')}</span>

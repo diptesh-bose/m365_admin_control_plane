@@ -12,7 +12,8 @@ import {
   CheckCircle, 
   AlertTriangle,
   X,
-  RefreshCw
+  RefreshCw,
+  ChevronDown
 } from 'lucide-react';
 import { graphService } from '../../services/graphService';
 
@@ -48,11 +49,34 @@ interface RestoreResults {
     success: number;
     failed: number;
     errors: string[];
+    successDetails: Array<{
+      policyName: string;
+      policyId: string;
+      restoreTime: string;
+    }>;
+    failedDetails: Array<{
+      policyName: string;
+      error: string;
+      restoreTime: string;
+    }>;
   };
 }
 
+interface RestoreAuditLog {
+  id: string;
+  timestamp: string;
+  backupId: string;
+  backupName: string;
+  restoredBy: string;
+  policyTypes: string[];
+  totalPolicies: number;
+  successCount: number;
+  failedCount: number;
+  details: RestoreResults;
+}
+
 export const PolicyBackup: React.FC<PolicyBackupProps> = ({ isOpen, onClose, onBackupCreated }) => {
-  const [activeTab, setActiveTab] = useState<'create' | 'manage' | 'restore'>('create');
+  const [activeTab, setActiveTab] = useState<'create' | 'manage' | 'restore' | 'audit'>('create');
   const [backups, setBackups] = useState<Backup[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -67,10 +91,13 @@ export const PolicyBackup: React.FC<PolicyBackupProps> = ({ isOpen, onClose, onB
   const [selectedBackup, setSelectedBackup] = useState<string>('');
   const [selectedPolicyTypes, setSelectedPolicyTypes] = useState<string[]>(['conditionalAccess', 'deviceCompliance']);
   const [restoreResults, setRestoreResults] = useState<RestoreResults | null>(null);
+  const [auditLogs, setAuditLogs] = useState<RestoreAuditLog[]>([]);
+  const [showDetailedResults, setShowDetailedResults] = useState(false);
 
   useEffect(() => {
     if (isOpen) {
       loadBackups();
+      loadAuditLogs();
     }
   }, [isOpen]);
 
@@ -84,6 +111,15 @@ export const PolicyBackup: React.FC<PolicyBackupProps> = ({ isOpen, onClose, onB
       console.error('Error loading backups:', err);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const loadAuditLogs = async () => {
+    try {
+      const logs = await graphService.getRestoreAuditLogs();
+      setAuditLogs(logs as RestoreAuditLog[]);
+    } catch (err) {
+      console.error('Error loading audit logs:', err);
     }
   };
 
@@ -155,6 +191,7 @@ export const PolicyBackup: React.FC<PolicyBackupProps> = ({ isOpen, onClose, onB
       const results = await graphService.restorePolicyBackup(selectedBackup, selectedPolicyTypes);
       setRestoreResults(results as RestoreResults);
       setSuccess('Policy restore completed! Check results below.');
+      await loadAuditLogs(); // Refresh audit logs
       
       setTimeout(() => setSuccess(null), 5000);
     } catch (err) {
@@ -203,7 +240,8 @@ export const PolicyBackup: React.FC<PolicyBackupProps> = ({ isOpen, onClose, onB
             {[
               { id: 'create', label: 'Create Backup', icon: Save },
               { id: 'manage', label: 'Manage Backups', icon: Calendar },
-              { id: 'restore', label: 'Restore Policies', icon: Upload }
+              { id: 'restore', label: 'Restore Policies', icon: Upload },
+              { id: 'audit', label: 'Audit Trail', icon: Clock }
             ].map(({ id, label, icon: Icon }) => (
               <button
                 key={id}
@@ -483,26 +521,231 @@ export const PolicyBackup: React.FC<PolicyBackupProps> = ({ isOpen, onClose, onB
                   </button>
                 </div>
 
-                {/* Restore Results */}
+                {/* Enhanced Restore Results */}
                 {restoreResults && (
                   <div className="mt-6 bg-white border border-gray-200 rounded-lg p-4">
-                    <h4 className="font-medium text-gray-900 mb-3">Restore Results</h4>
+                    <div className="flex items-center justify-between mb-4">
+                      <h4 className="font-medium text-gray-900">Restore Results</h4>
+                      <button
+                        onClick={() => setShowDetailedResults(!showDetailedResults)}
+                        className="text-sm text-blue-600 hover:text-blue-800 flex items-center space-x-1"
+                      >
+                        <span>{showDetailedResults ? 'Hide Details' : 'Show Details'}</span>
+                        <ChevronDown className={`w-4 h-4 transform transition-transform ${showDetailedResults ? 'rotate-180' : ''}`} />
+                      </button>
+                    </div>
+                    
                     <div className="space-y-3">
                       {Object.entries(restoreResults).map(([type, results]) => (
-                        <div key={type} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
-                          <span className="font-medium capitalize">{type.replace(/([A-Z])/g, ' $1')}</span>
-                          <div className="flex items-center space-x-4 text-sm">
-                            <span className="text-green-600">✓ {results.success} success</span>
-                            {results.failed > 0 && (
-                              <span className="text-red-600">✗ {results.failed} failed</span>
-                            )}
+                        <div key={type} className="border border-gray-200 rounded-lg overflow-hidden">
+                          <div className="flex items-center justify-between p-3 bg-gray-50">
+                            <span className="font-medium capitalize">{type.replace(/([A-Z])/g, ' $1')}</span>
+                            <div className="flex items-center space-x-4 text-sm">
+                              {results.success > 0 && (
+                                <span className="text-green-600 flex items-center space-x-1">
+                                  <CheckCircle className="w-4 h-4" />
+                                  <span>{results.success} success</span>
+                                </span>
+                              )}
+                              {results.failed > 0 && (
+                                <span className="text-red-600 flex items-center space-x-1">
+                                  <X className="w-4 h-4" />
+                                  <span>{results.failed} failed</span>
+                                </span>
+                              )}
+                            </div>
                           </div>
+                          
+                          {showDetailedResults && (
+                            <div className="p-3 border-t">
+                              {/* Success Details */}
+                              {results.successDetails && results.successDetails.length > 0 && (
+                                <div className="mb-4">
+                                  <h5 className="text-sm font-medium text-green-800 mb-2 flex items-center">
+                                    <CheckCircle className="w-4 h-4 mr-1" />
+                                    Successfully Restored ({results.successDetails.length})
+                                  </h5>
+                                  <div className="space-y-2">
+                                    {results.successDetails.map((detail, index) => (
+                                      <div key={index} className="bg-green-50 border border-green-200 rounded p-2">
+                                        <div className="flex items-center justify-between">
+                                          <span className="text-sm font-medium text-green-900">{detail.policyName}</span>
+                                          <span className="text-xs text-green-600">
+                                            ID: {detail.policyId}
+                                          </span>
+                                        </div>
+                                        <div className="text-xs text-green-600 mt-1">
+                                          Restored: {new Date(detail.restoreTime).toLocaleString()}
+                                        </div>
+                                      </div>
+                                    ))}
+                                  </div>
+                                </div>
+                              )}
+                              
+                              {/* Failed Details */}
+                              {results.failedDetails && results.failedDetails.length > 0 && (
+                                <div>
+                                  <h5 className="text-sm font-medium text-red-800 mb-2 flex items-center">
+                                    <AlertTriangle className="w-4 h-4 mr-1" />
+                                    Failed to Restore ({results.failedDetails.length})
+                                  </h5>
+                                  <div className="space-y-2">
+                                    {results.failedDetails.map((detail, index) => (
+                                      <div key={index} className="bg-red-50 border border-red-200 rounded p-2">
+                                        <div className="text-sm font-medium text-red-900">{detail.policyName}</div>
+                                        <div className="text-sm text-red-700 mt-1">{detail.error}</div>
+                                        <div className="text-xs text-red-600 mt-1">
+                                          Failed: {new Date(detail.restoreTime).toLocaleString()}
+                                        </div>
+                                      </div>
+                                    ))}
+                                  </div>
+                                </div>
+                              )}
+                              
+                              {/* No policies */}
+                              {(!results.successDetails || results.successDetails.length === 0) && 
+                               (!results.failedDetails || results.failedDetails.length === 0) && (
+                                <div className="text-sm text-gray-500 text-center py-2">
+                                  No policies of this type were restored
+                                </div>
+                              )}
+                            </div>
+                          )}
                         </div>
                       ))}
                     </div>
                   </div>
                 )}
               </div>
+            </div>
+          )}
+
+          {/* Audit Trail Tab */}
+          {activeTab === 'audit' && (
+            <div className="space-y-6">
+              <div className="flex items-center justify-between">
+                <h3 className="text-lg font-semibold text-gray-900">Restore Audit Trail</h3>
+                <button
+                  onClick={loadAuditLogs}
+                  className="flex items-center space-x-2 px-4 py-2 text-sm bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200"
+                >
+                  <RefreshCw className="w-4 h-4" />
+                  <span>Refresh</span>
+                </button>
+              </div>
+
+              {auditLogs.length === 0 ? (
+                <div className="text-center py-12 bg-gray-50 rounded-lg">
+                  <Clock className="w-12 h-12 text-gray-400 mx-auto mb-4" />
+                  <h4 className="text-lg font-medium text-gray-900 mb-2">No Audit Logs Found</h4>
+                  <p className="text-gray-600">Restore operations will appear here with full audit details</p>
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  {auditLogs.map((log) => (
+                    <div key={log.id} className="bg-white border border-gray-200 rounded-lg p-6 hover:shadow-md transition-shadow">
+                      <div className="flex items-start justify-between">
+                        <div className="flex-1">
+                          <div className="flex items-center space-x-3 mb-2">
+                            <h4 className="text-lg font-semibold text-gray-900">{log.backupName}</h4>
+                            <span className="px-2 py-1 text-xs bg-blue-100 text-blue-800 rounded-full">
+                              {log.totalPolicies} policies
+                            </span>
+                            <span className={`px-2 py-1 text-xs rounded-full ${
+                              log.failedCount === 0 
+                                ? 'bg-green-100 text-green-800' 
+                                : 'bg-yellow-100 text-yellow-800'
+                            }`}>
+                              {log.failedCount === 0 ? 'Complete' : 'Partial'}
+                            </span>
+                          </div>
+                          
+                          <div className="flex items-center space-x-6 text-sm text-gray-600 mb-3">
+                            <div className="flex items-center space-x-1">
+                              <Clock className="w-4 h-4" />
+                              <span>Restored: {new Date(log.timestamp).toLocaleString()}</span>
+                            </div>
+                            <div className="flex items-center space-x-1">
+                              <Shield className="w-4 h-4" />
+                              <span>By: {log.restoredBy}</span>
+                            </div>
+                          </div>
+
+                          <div className="flex items-center space-x-6 text-sm">
+                            <div className="flex items-center space-x-1 text-green-600">
+                              <CheckCircle className="w-4 h-4" />
+                              <span>{log.successCount} successful</span>
+                            </div>
+                            {log.failedCount > 0 && (
+                              <div className="flex items-center space-x-1 text-red-600">
+                                <AlertTriangle className="w-4 h-4" />
+                                <span>{log.failedCount} failed</span>
+                              </div>
+                            )}
+                            <div className="text-gray-500">
+                              Types: {log.policyTypes.join(', ')}
+                            </div>
+                          </div>
+                        </div>
+                        
+                        <div className="ml-4">
+                          <button
+                            onClick={() => {
+                              const dataStr = JSON.stringify(log, null, 2);
+                              const dataBlob = new Blob([dataStr], { type: 'application/json' });
+                              const url = URL.createObjectURL(dataBlob);
+                              const link = document.createElement('a');
+                              link.href = url;
+                              link.download = `restore_audit_${log.id}.json`;
+                              link.click();
+                              URL.revokeObjectURL(url);
+                            }}
+                            className="flex items-center space-x-1 px-3 py-2 text-sm bg-blue-100 text-blue-700 rounded-lg hover:bg-blue-200"
+                          >
+                            <Download className="w-4 h-4" />
+                            <span>Export</span>
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Detailed breakdown */}
+                      <div className="mt-4 pt-4 border-t border-gray-200">
+                        <h5 className="text-sm font-medium text-gray-700 mb-3">Detailed Results</h5>
+                        <div className="grid md:grid-cols-2 gap-4">
+                          {Object.entries(log.details as Record<string, unknown>).map(([type, results]) => {
+                            const r = results as Record<string, unknown>;
+                            return (
+                              <div key={type} className="bg-gray-50 rounded-lg p-3">
+                                <div className="flex items-center justify-between mb-2">
+                                  <span className="text-sm font-medium capitalize">
+                                    {type.replace(/([A-Z])/g, ' $1')}
+                                  </span>
+                                  <div className="text-xs text-gray-500">
+                                    {Number(r.success) + Number(r.failed)} policies
+                                  </div>
+                                </div>
+                                <div className="flex items-center space-x-3 text-xs">
+                                  {Number(r.success) > 0 && (
+                                    <span className="text-green-600">✓ {Number(r.success)}</span>
+                                  )}
+                                  {Number(r.failed) > 0 && (
+                                    <span className="text-red-600">✗ {Number(r.failed)}</span>
+                                  )}
+                                  {Number(r.success) === 0 && Number(r.failed) === 0 && (
+                                    <span className="text-gray-400">No policies</span>
+                                  )}
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           )}
         </div>

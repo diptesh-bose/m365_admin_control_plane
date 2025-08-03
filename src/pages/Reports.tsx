@@ -1,9 +1,12 @@
-import React, { useEffect, useMemo } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Area, AreaChart } from 'recharts';
-import { Download, Calendar, TrendingUp, AlertTriangle, Users, Shield, RefreshCw } from 'lucide-react';
+import { Download, Calendar, TrendingUp, AlertTriangle, Users, Shield, RefreshCw, Smartphone } from 'lucide-react';
 import { useGraphData } from '../hooks/useGraphData';
+import IntuneReportsComponent from '../components/Reports/IntuneReports';
 
 export const Reports: React.FC = () => {
+  const [activeTab, setActiveTab] = useState<'general' | 'intune'>('general');
+  
   const { 
     reportsData, 
     securityAlerts, 
@@ -48,33 +51,26 @@ export const Reports: React.FC = () => {
   }, [reportsData]);
 
   // Transform security scores data
-  const complianceData = useMemo(() => {
+  const securityScoreData = useMemo(() => {
     if (!reportsData?.securityScores) return [];
     
     return reportsData.securityScores.slice(-10).map((score: any) => ({
-      date: new Date(score.createdDateTime).toLocaleDateString(),
-      score: Math.round((score.currentScore / score.maxScore) * 100)
+      date: new Date(score.createdDateTime).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
+      currentScore: score.currentScore,
+      maxScore: score.maxScore,
+      percentage: Math.round((score.currentScore / score.maxScore) * 100)
     }));
   }, [reportsData]);
 
-  // Calculate real-time metrics
+  // Calculate metrics
   const metrics = useMemo(() => {
-    const activeUsers = users.filter(user => user.status === 'Active').length;
-    const totalPolicies = policies.length;
-    const activePolicies = policies.filter(policy => policy.status === 'Active').length;
-    const openAlerts = securityAlerts.length;
-    const recentActivities = activities.filter(activity => 
-      new Date(activity.timestamp).getTime() > Date.now() - 24 * 60 * 60 * 1000
-    ).length;
-
-    return {
-      systemUptime: 98.7, // This would come from service health API
-      securityEvents: recentActivities,
-      activeUsers: activeUsers,
-      openAlerts: openAlerts,
-      totalPolicies: totalPolicies,
-      activePolicies: activePolicies
-    };
+    const totalUsers = users.length;
+    const activePolicies = policies.filter(policy => policy.status === 'enabled').length;
+    const recentActivities = activities.slice(0, 10).length;
+    const openAlerts = securityAlerts.filter(alert => alert.status === 'newAlert').length;
+    const systemUptime = 99.8; // This would come from actual monitoring data
+    
+    return { totalUsers, activePolicies, recentActivities, openAlerts, systemUptime };
   }, [users, policies, securityAlerts, activities]);
 
   if (loading) {
@@ -106,6 +102,7 @@ export const Reports: React.FC = () => {
       </div>
     );
   }
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
@@ -125,129 +122,206 @@ export const Reports: React.FC = () => {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
-        <div className="bg-white rounded-xl p-6 shadow-sm border border-gray-200">
-          <div className="flex items-center justify-between mb-4">
-            <TrendingUp className="w-8 h-8 text-green-600" />
-            <span className="text-sm font-medium text-green-600">+0.2%</span>
-          </div>
-          <h3 className="text-2xl font-bold text-gray-900 mb-1">{metrics.systemUptime}%</h3>
-          <p className="text-sm text-gray-500">System Uptime</p>
-        </div>
-
-        <div className="bg-white rounded-xl p-6 shadow-sm border border-gray-200">
-          <div className="flex items-center justify-between mb-4">
-            <Shield className="w-8 h-8 text-blue-600" />
-            <span className="text-sm font-medium text-blue-600">24h</span>
-          </div>
-          <h3 className="text-2xl font-bold text-gray-900 mb-1">{metrics.securityEvents.toLocaleString()}</h3>
-          <p className="text-sm text-gray-500">Security Events</p>
-        </div>
-
-        <div className="bg-white rounded-xl p-6 shadow-sm border border-gray-200">
-          <div className="flex items-center justify-between mb-4">
-            <Users className="w-8 h-8 text-purple-600" />
-            <span className="text-sm font-medium text-purple-600">
-              {reportsData?.organizationStats?.userGrowthRate ? `+${reportsData.organizationStats.userGrowthRate.toFixed(1)}%` : '+0%'}
-            </span>
-          </div>
-          <h3 className="text-2xl font-bold text-gray-900 mb-1">{metrics.activeUsers.toLocaleString()}</h3>
-          <p className="text-sm text-gray-500">Active Users</p>
-        </div>
-
-        <div className="bg-white rounded-xl p-6 shadow-sm border border-gray-200">
-          <div className="flex items-center justify-between mb-4">
-            <AlertTriangle className="w-8 h-8 text-red-600" />
-            <span className="text-sm font-medium text-red-600">
-              {metrics.openAlerts > 0 ? `${metrics.openAlerts} open` : 'All clear'}
-            </span>
-          </div>
-          <h3 className="text-2xl font-bold text-gray-900 mb-1">{metrics.openAlerts}</h3>
-          <p className="text-sm text-gray-500">Security Alerts</p>
-        </div>
+      {/* Tab Navigation */}
+      <div className="border-b border-gray-200">
+        <nav className="-mb-px flex space-x-8">
+          <button
+            onClick={() => setActiveTab('general')}
+            className={`py-2 px-1 border-b-2 font-medium text-sm ${
+              activeTab === 'general'
+                ? 'border-blue-500 text-blue-600'
+                : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+            }`}
+          >
+            <div className="flex items-center space-x-2">
+              <Shield className="w-4 h-4" />
+              <span>General Reports</span>
+            </div>
+          </button>
+          <button
+            onClick={() => setActiveTab('intune')}
+            className={`py-2 px-1 border-b-2 font-medium text-sm ${
+              activeTab === 'intune'
+                ? 'border-blue-500 text-blue-600'
+                : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+            }`}
+          >
+            <div className="flex items-center space-x-2">
+              <Smartphone className="w-4 h-4" />
+              <span>Intune Reports</span>
+            </div>
+          </button>
+        </nav>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <div className="bg-white rounded-xl p-6 shadow-sm border border-gray-200">
-          <h3 className="text-lg font-semibold text-gray-900 mb-6">Policy Activity Trends</h3>
-          <ResponsiveContainer width="100%" height={300}>
-            {policyTrendData.length > 0 ? (
-              <BarChart data={policyTrendData}>
-                <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="month" />
-                <YAxis />
-                <Tooltip />
-                <Bar dataKey="created" fill="#3B82F6" name="Created" />
-                <Bar dataKey="modified" fill="#10B981" name="Modified" />
-                <Bar dataKey="deleted" fill="#EF4444" name="Deleted" />
-              </BarChart>
-            ) : (
-              <div className="flex items-center justify-center h-full">
-                <div className="text-center text-gray-500">
-                  <TrendingUp className="w-12 h-12 mx-auto mb-4 text-gray-300" />
-                  <p>No policy activity data available</p>
-                </div>
+      {/* Tab Content */}
+      {activeTab === 'general' && (
+        <div className="space-y-6">
+          <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
+            <div className="bg-white rounded-xl p-6 shadow-sm border border-gray-200">
+              <div className="flex items-center justify-between mb-4">
+                <TrendingUp className="w-8 h-8 text-green-600" />
+                <span className="text-sm font-medium text-green-600">+0.2%</span>
               </div>
-            )}
-          </ResponsiveContainer>
-        </div>
+              <h3 className="text-2xl font-bold text-gray-900 mb-1">{metrics.systemUptime}%</h3>
+              <p className="text-sm text-gray-500">System Uptime</p>
+            </div>
 
-        <div className="bg-white rounded-xl p-6 shadow-sm border border-gray-200">
-          <h3 className="text-lg font-semibold text-gray-900 mb-6">Security Score Over Time</h3>
-          <ResponsiveContainer width="100%" height={300}>
-            {complianceData.length > 0 ? (
-              <AreaChart data={complianceData}>
-                <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="date" />
-                <YAxis domain={[60, 100]} />
-                <Tooltip />
-                <Area type="monotone" dataKey="score" stroke="#3B82F6" fill="#3B82F6" fillOpacity={0.2} />
-              </AreaChart>
-            ) : (
-              <div className="flex items-center justify-center h-full">
-                <div className="text-center text-gray-500">
+            <div className="bg-white rounded-xl p-6 shadow-sm border border-gray-200">
+              <div className="flex items-center justify-between mb-4">
+                <Users className="w-8 h-8 text-blue-600" />
+                <span className="text-sm font-medium text-green-600">
+                  +5%
+                </span>
+              </div>
+              <h3 className="text-2xl font-bold text-gray-900 mb-1">{metrics.totalUsers}</h3>
+              <p className="text-sm text-gray-500">Active Users</p>
+            </div>
+
+            <div className="bg-white rounded-xl p-6 shadow-sm border border-gray-200">
+              <div className="flex items-center justify-between mb-4">
+                <Shield className="w-8 h-8 text-purple-600" />
+                <span className="text-sm font-medium text-blue-600">
+                  {metrics.activePolicies > 0 ? 'Active' : 'Inactive'}
+                </span>
+              </div>
+              <h3 className="text-2xl font-bold text-gray-900 mb-1">{metrics.activePolicies}</h3>
+              <p className="text-sm text-gray-500">Security Policies</p>
+            </div>
+
+            <div className="bg-white rounded-xl p-6 shadow-sm border border-gray-200">
+              <div className="flex items-center justify-between mb-4">
+                <AlertTriangle className="w-8 h-8 text-red-600" />
+                <span className={`text-sm font-medium ${metrics.openAlerts > 0 ? 'text-red-600' : 'text-green-600'}`}>
+                  {metrics.openAlerts > 0 ? 'Action Required' : 'All Clear'}
+                </span>
+              </div>
+              <h3 className="text-2xl font-bold text-gray-900 mb-1">{metrics.openAlerts}</h3>
+              <p className="text-sm text-gray-500">Security Alerts</p>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <div className="bg-white rounded-xl p-6 shadow-sm border border-gray-200">
+              <h3 className="text-lg font-semibold text-gray-900 mb-6">Policy Activity Trends</h3>
+              <ResponsiveContainer width="100%" height={300}>
+                {policyTrendData.length > 0 ? (
+                  <BarChart data={policyTrendData}>
+                    <CartesianGrid strokeDasharray="3 3" />
+                    <XAxis dataKey="month" />
+                    <YAxis />
+                    <Tooltip />
+                    <Bar dataKey="created" fill="#10b981" name="Created" />
+                    <Bar dataKey="modified" fill="#f59e0b" name="Modified" />
+                    <Bar dataKey="deleted" fill="#ef4444" name="Deleted" />
+                  </BarChart>
+                ) : (
+                  <div className="flex items-center justify-center h-full text-gray-500">
+                    <div className="text-center">
+                      <TrendingUp className="w-12 h-12 mx-auto mb-4 text-gray-300" />
+                      <p>No policy activity data available</p>
+                    </div>
+                  </div>
+                )}
+              </ResponsiveContainer>
+            </div>
+
+            <div className="bg-white rounded-xl p-6 shadow-sm border border-gray-200">
+              <h3 className="text-lg font-semibold text-gray-900 mb-6">Security Score History</h3>
+              <ResponsiveContainer width="100%" height={300}>
+                {securityScoreData.length > 0 ? (
+                  <AreaChart data={securityScoreData}>
+                    <CartesianGrid strokeDasharray="3 3" />
+                    <XAxis dataKey="date" />
+                    <YAxis />
+                    <Tooltip formatter={(value, name) => [value, name === 'percentage' ? 'Score (%)' : name]} />
+                    <Area type="monotone" dataKey="percentage" stroke="#8884d8" fill="#8884d8" fillOpacity={0.3} />
+                  </AreaChart>
+                ) : (
+                  <div className="flex items-center justify-center h-full text-gray-500">
+                    <div className="text-center">
+                      <Shield className="w-12 h-12 mx-auto mb-4 text-gray-300" />
+                      <p>No security score data available</p>
+                    </div>
+                  </div>
+                )}
+              </ResponsiveContainer>
+            </div>
+          </div>
+
+          <div className="bg-white rounded-xl p-6 shadow-sm border border-gray-200">
+            <h3 className="text-lg font-semibold text-gray-900 mb-6">Security Recommendations</h3>
+            <div className="space-y-4">
+              {(reportsData?.recommendations || []).slice(0, 5).map((item: any, index: number) => (
+                <div key={index} className="flex items-center justify-between p-4 bg-gray-50 rounded-lg">
+                  <div className="flex items-center space-x-3">
+                    <Shield className="w-5 h-5 text-blue-600" />
+                    <div>
+                      <p className="font-medium text-gray-900">{item.title}</p>
+                      <p className="text-sm text-gray-600">{item.description}</p>
+                    </div>
+                  </div>
+                  <span className={`px-2 py-1 text-xs font-medium rounded-full ${
+                    item.status === 'recommended' ? 'bg-blue-100 text-blue-800' :
+                    item.status === 'completed' ? 'bg-green-100 text-green-800' :
+                    'bg-yellow-100 text-yellow-800'
+                  }`}>
+                    {item.status}
+                  </span>
+                </div>
+              ))}
+              {(!reportsData?.recommendations || reportsData.recommendations.length === 0) && (
+                <div className="text-center py-8 text-gray-500">
                   <Shield className="w-12 h-12 mx-auto mb-4 text-gray-300" />
-                  <p>No security score data available</p>
+                  <p>No recommendations available at this time.</p>
                 </div>
-              </div>
-            )}
-          </ResponsiveContainer>
+              )}
+            </div>
+          </div>
         </div>
-      </div>
+      )}
 
-      <div className="bg-white rounded-xl p-6 shadow-sm border border-gray-200">
-        <h3 className="text-lg font-semibold text-gray-900 mb-6">Security Recommendations</h3>
-        <div className="space-y-4">
-          {(reportsData?.recommendations || []).slice(0, 5).map((item: any, index: number) => (
-            <div key={item.id || index} className="flex items-center justify-between p-4 bg-gray-50 rounded-lg">
-              <div className="flex items-center space-x-3">
-                <div className={`w-3 h-3 rounded-full ${
-                  item.impact === 'Critical' ? 'bg-red-500' :
-                  item.impact === 'High' ? 'bg-orange-500' :
-                  'bg-yellow-500'
-                }`}></div>
-                <div>
-                  <p className="font-medium text-gray-900">{item.title}</p>
-                  <p className="text-sm text-gray-500">Impact: {item.impact}</p>
-                </div>
-              </div>
-              <span className={`px-3 py-1 text-xs font-medium rounded-full ${
-                item.status === 'Completed' ? 'bg-green-100 text-green-800' :
-                item.status === 'In Progress' ? 'bg-blue-100 text-blue-800' :
-                'bg-gray-100 text-gray-800'
-              }`}>
-                {item.status}
-              </span>
-            </div>
-          ))}
-          {(!reportsData?.recommendations || reportsData.recommendations.length === 0) && (
-            <div className="text-center py-8 text-gray-500">
-              <Shield className="w-12 h-12 mx-auto mb-4 text-gray-300" />
-              <p>No recommendations available at this time.</p>
-            </div>
-          )}
-        </div>
-      </div>
+      {/* Intune Reports Tab */}
+      {activeTab === 'intune' && (
+        <IntuneReportsComponent 
+          reports={{
+            deviceComplianceReport: {
+              reportName: "Device Compliance Overview",
+              totalDevices: 0,
+              compliantDevices: 0,
+              nonCompliantDevices: 0,
+              errorDevices: 0,
+              unknownDevices: 0,
+              complianceRate: 0
+            },
+            appInstallationReport: {
+              reportName: "Application Installation Status",
+              totalApps: 0,
+              successfulInstalls: 0,
+              failedInstalls: 0,
+              pendingInstalls: 0,
+              installationRate: 0
+            },
+            deviceInventoryReport: {
+              reportName: "Device Inventory Summary",
+              totalDevices: 0,
+              enrolledDevices: 0,
+              activeDevices: 0,
+              inactiveDevices: 0,
+              devicesByPlatform: {
+                windows: 0,
+                iOS: 0,
+                android: 0,
+                macOS: 0,
+                other: 0
+              }
+            }
+          }}
+          loading={false}
+        />
+      )}
     </div>
   );
 };
+
+export default Reports;

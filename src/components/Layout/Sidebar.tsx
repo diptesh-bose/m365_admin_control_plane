@@ -8,13 +8,17 @@ import {
   Settings, 
   Activity,
   Bell,
-  ChevronRight
+  ChevronRight,
+  Smartphone,
+  Package
 } from 'lucide-react';
 
 const navItems = [
   { icon: LayoutDashboard, label: 'Dashboard', path: '/dashboard' },
   { icon: Shield, label: 'Policy Management', path: '/policies' },
   { icon: Users, label: 'User Management', path: '/users' },
+  { icon: Smartphone, label: 'Device Management', path: '/devices' },
+  { icon: Package, label: 'App Management', path: '/apps' },
   { icon: FileText, label: 'Reports', path: '/reports' },
   { icon: Activity, label: 'Activity Log', path: '/activity' },
   { icon: Settings, label: 'Settings', path: '/settings' },

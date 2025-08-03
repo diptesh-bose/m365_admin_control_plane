@@ -1,7 +1,7 @@
 import React, { useEffect } from 'react';
 import { BrowserRouter as Router, Routes, Route, useNavigate, useLocation } from 'react-router-dom';
 import { MsalProvider } from '@azure/msal-react';
-import { PublicClientApplication, EventType } from '@azure/msal-browser';
+import { PublicClientApplication } from '@azure/msal-browser';
 import { msalConfig } from './config/authConfig';
 import { useAuth } from './hooks/useAuth';
 import { LoginPage } from './components/Auth/LoginPage';
@@ -11,6 +11,8 @@ import { Header } from './components/Layout/Header';
 import { Dashboard } from './pages/Dashboard';
 import { Policies } from './pages/Policies';
 import { Users } from './pages/Users';
+import Devices from './pages/Devices';
+import Apps from './pages/Apps';
 import { Reports } from './pages/Reports';
 import { Activity } from './pages/Activity';
 import { Settings } from './pages/Settings';
@@ -112,6 +114,28 @@ const AppContent: React.FC = () => {
                 <Header />
                 <main className="flex-1 overflow-x-hidden overflow-y-auto p-6">
                   <Users />
+                </main>
+              </div>
+            </div>
+          } />
+          <Route path="/devices" element={
+            <div className="flex h-screen bg-gray-50">
+              <Sidebar />
+              <div className="flex-1 flex flex-col overflow-hidden">
+                <Header />
+                <main className="flex-1 overflow-x-hidden overflow-y-auto p-6">
+                  <Devices />
+                </main>
+              </div>
+            </div>
+          } />
+          <Route path="/apps" element={
+            <div className="flex h-screen bg-gray-50">
+              <Sidebar />
+              <div className="flex-1 flex flex-col overflow-hidden">
+                <Header />
+                <main className="flex-1 overflow-x-hidden overflow-y-auto p-6">
+                  <Apps />
                 </main>
               </div>
             </div>

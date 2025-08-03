@@ -1,8 +1,12 @@
-﻿import { Client } from '@microsoft/microsoft-graph-client';
+import { Client } from '@microsoft/microsoft-graph-client';
 import { AuthCodeMSALBrowserAuthenticationProvider } from '@microsoft/microsoft-graph-client/authProviders/authCodeMsalBrowser';
 import { PublicClientApplication, InteractionType } from '@azure/msal-browser';
 import { msalConfig, loginRequest } from '../config/authConfig';
-import { DeviceConfigurationPolicy } from '../types';
+import { 
+  User, 
+  Policy, 
+  DeviceConfigurationPolicy
+} from '../types';
 
 // Interface definitions
 interface GraphUser {

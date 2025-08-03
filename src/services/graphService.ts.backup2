@@ -1,0 +1,1438 @@
+﻿import { Client } from '@microsoft/microsoft-graph-client';
+import { AuthCodeMSALBrowserAuthenticationProvider } from '@microsoft/microsoft-graph-client/authProviders/authCodeMsalBrowser';
+import { PublicClientApplication, InteractionType } from '@azure/msal-browser';
+import { msalConfig, loginRequest } from '../config/authConfig';
+import { DeviceConfigurationPolicy } from '../types';
+
+// Type definitions for Graph API responses
+interface GraphUser {
+  id: string;
+  displayName: string;
+  userPrincipalName: string;
+  accountEnabled: boolean;
+  createdDateTime?: string;
+  lastSignInDateTime?: string;
+  department?: string;
+  jobTitle?: string;
+  signInActivity?: {
+    lastSignInDateTime?: string;
+  };
+}
+
+interface GraphPolicy {
+  id: string;
+  displayName: string;
+  state?: string;
+  modifiedDateTime?: string;
+  lastModifiedDateTime?: string;
+  createdDateTime?: string;
+  description?: string;
+  conditions?: {
+    applications?: { includeApplications?: string[] };
+    users?: { includeUsers?: string[] };
+  };
+}
+
+interface GraphAuditLog {
+  id: string;
+  category: string;
+  activityDisplayName: string;
+  activityDateTime: string;
+  initiatedBy?: {
+    user?: { userPrincipalName?: string };
+  };
+  result?: {
+    resultType?: string;
+  };
+}
+
+interface GraphSecurityRecommendation {
+  id: string;
+  title: string;
+  userImpact?: string;
+  implementationCost?: string;
+  actionType?: string;
+  controlStateUpdates?: Array<{ assignedTo?: string }>;
+}
+
+interface GraphDevice {
+  id: string;
+  accountEnabled: boolean;
+  approximateLastSignInDateTime?: string;
+}
+
+// Add interface for device data returned from API
+interface DeviceData {
+  complianceState: string;
+  operatingSystem: string;
+  lastSyncDateTime: Date;
+}
+
+interface AppData {
+  isAssigned: boolean;
+}
+
+// Intune-specific interfaces for Graph API responses
+interface GraphManagedDevice {
+  id: string;
+  deviceName: string;
+  managedDeviceOwnerType: string;
+  enrolledDateTime: string;
+  lastSyncDateTime: string;
+  operatingSystem: string;
+  osVersion: string;
+  deviceType: string;
+  complianceState: string;
+  jailBroken: string;
+  managementAgent: string;
+  azureADRegistered: boolean;
+  deviceEnrollmentType: string;
+  emailAddress?: string;
+  azureADDeviceId?: string;
+  deviceRegistrationState: string;
+  deviceCategoryDisplayName?: string;
+  isSupervised: boolean;
+  exchangeAccessState: string;
+  exchangeAccessStateReason: string;
+  isEncrypted: boolean;
+  userPrincipalName?: string;
+  model?: string;
+  manufacturer?: string;
+  imei?: string;
+  serialNumber?: string;
+  phoneNumber?: string;
+  userDisplayName?: string;
+  totalStorageSpaceInBytes?: number;
+  freeStorageSpaceInBytes?: number;
+  partnerReportedThreatState: string;
+  autopilotEnrolled: boolean;
+  joinType: string;
+  managementFeatures: string;
+  processorArchitecture: string;
+}
+
+interface GraphMobileApp {
+  id: string;
+  displayName: string;
+  description?: string;
+  publisher?: string;
+  createdDateTime: string;
+  lastModifiedDateTime: string;
+  isFeatured: boolean;
+  privacyInformationUrl?: string;
+  informationUrl?: string;
+  owner?: string;
+  developer?: string;
+  notes?: string;
+  uploadState: string;
+  publishingState: string;
+  isAssigned: boolean;
+  roleScopeTagIds: string[];
+  dependentAppCount: number;
+  supersedingAppCount: number;
+  supersededAppCount: number;
+  appAvailability: string;
+}
+
+interface GraphIntunePolicy {
+  id: string;
+  displayName: string;
+  description?: string;
+  createdDateTime: string;
+  lastModifiedDateTime: string;
+  version: number;
+  roleScopeTagIds: string[];
+  assignments?: unknown[];
+  deviceStatuses?: unknown[];
+  userStatuses?: unknown[];
+  deviceStatusOverview?: unknown;
+  userStatusOverview?: unknown;
+  isAssigned?: boolean;
+  targetedAppManagementLevels?: string;
+  appGroupType?: string;
+  apps?: unknown[];
+}
+
+interface GraphDeviceConfigurationPolicy {
+  id: string;
+  displayName: string;
+  description?: string;
+  createdDateTime: string;
+  lastModifiedDateTime: string;
+  version: number;
+  '@odata.type': string;
+  platformType?: string;
+  roleScopeTagIds: string[];
+  technologies?: string[];
+}
+
+interface GraphDeviceCompliancePolicy {
+  id: string;
+  displayName: string;
+  description?: string;
+  createdDateTime: string;
+  lastModifiedDateTime: string;
+  version: number;
+  '@odata.type'?: string;
+}
+
+class GraphService {
+  private graphClient: Client | null = null;
+  private msalInstance: PublicClientApplication;
+
+  constructor() {
+    this.msalInstance = new PublicClientApplication(msalConfig);
+  }
+
+  async initialize() {
+    await this.msalInstance.initialize();
+    
+    const authProvider = new AuthCodeMSALBrowserAuthenticationProvider(
+      this.msalInstance,
+      {
+        account: this.msalInstance.getActiveAccount()!,
+        scopes: loginRequest.scopes,
+        interactionType: InteractionType.Redirect,
+      }
+    );
+
+    this.graphClient = Client.initWithMiddleware({ authProvider });
+  }
+
+  async getUsers(top: number = 100) {
+    if (!this.graphClient) throw new Error('Graph client not initialized');
+    
+    try {
+      const response = await this.graphClient
+        .api('/users')
+        .select('id,displayName,userPrincipalName,accountEnabled,createdDateTime,lastSignInDateTime,department,jobTitle')
+        .top(top)
+        .get();
+      
+      return response.value.map((user: GraphUser) => ({
+        id: user.id,
+        name: user.displayName,
+        email: user.userPrincipalName,
+        status: user.accountEnabled ? 'Active' : 'Inactive',
+        lastLogin: user.lastSignInDateTime ? new Date(user.lastSignInDateTime) : new Date(),
+        department: user.department || 'Unknown',
+        role: this.mapUserRole(user.jobTitle || '')
+      }));
+    } catch (error) {
+      console.error('Error fetching users:', error);
+      throw error;
+    }
+  }
+
+  async getConditionalAccessPolicies() {
+    if (!this.graphClient) throw new Error('Graph client not initialized');
+    
+    try {
+      const response = await this.graphClient
+        .api('/identity/conditionalAccess/policies')
+        .get();
+      
+      return response.value.map((policy: GraphPolicy) => ({
+        id: policy.id,
+        name: policy.displayName,
+        type: 'Conditional Access',
+        status: policy.state || 'disabled', // Use actual Graph API values: enabled, disabled, enabledForReportingButNotEnforced
+        priority: null, // Conditional Access policies don't have priority in the API
+        lastModified: new Date(policy.modifiedDateTime || policy.createdDateTime || new Date()),
+        createdBy: policy.createdDateTime,
+        affectedUsers: 0, // Would need additional API calls to calculate
+        description: policy.description || policy.displayName,
+        tags: ['conditional-access', 'security']
+      }));
+    } catch (error) {
+      console.error('Error fetching conditional access policies:', error);
+      throw error;
+    }
+  }
+
+  async getAuditLogs(top: number = 100) {
+    if (!this.graphClient) throw new Error('Graph client not initialized');
+    
+    try {
+      const response = await this.graphClient
+        .api('/auditLogs/directoryAudits')
+        .select('id,category,activityDisplayName,activityDateTime,initiatedBy,result')
+        .top(top)
+        .orderby('activityDateTime desc')
+        .get();
+      
+      return response.value.map((log: GraphAuditLog) => ({
+        id: log.id,
+        type: log.activityDisplayName,
+        description: `${log.category}: ${log.activityDisplayName}`,
+        timestamp: new Date(log.activityDateTime),
+        user: log.initiatedBy?.user?.userPrincipalName || 'System',
+        severity: this.mapLogSeverity(log.result)
+      }));
+    } catch (error) {
+      console.error('Error fetching audit logs:', error);
+      throw error;
+    }
+  }
+
+  async getSecurityAlerts(top: number = 50) {
+    if (!this.graphClient) throw new Error('Graph client not initialized');
+    
+    try {
+      const response = await this.graphClient
+        .api('/security/alerts_v2')
+        .select('id,title,description,severity,status,createdDateTime,classification')
+        .top(top)
+        .orderby('createdDateTime desc')
+        .get();
+      
+      return response.value;
+    } catch (error) {
+      console.error('Error fetching security alerts:', error);
+      throw error;
+    }
+  }
+
+  async getOrganizationInfo() {
+    if (!this.graphClient) throw new Error('Graph client not initialized');
+    
+    try {
+      const response = await this.graphClient
+        .api('/organization')
+        .select('id,displayName,verifiedDomains,assignedPlans')
+        .get();
+      
+      return response.value[0];
+    } catch (error) {
+      console.error('Error fetching organization info:', error);
+      throw error;
+    }
+  }
+
+  async getOrganizationStatistics() {
+    if (!this.graphClient) throw new Error('Graph client not initialized');
+    
+    try {
+      // Get organization info and user statistics
+      const [orgResponse, usersResponse, devicesResponse] = await Promise.allSettled([
+        this.graphClient.api('/organization').select('id,displayName,verifiedDomains').get(),
+        this.graphClient.api('/users').select('id,accountEnabled,signInActivity').top(999).get(),
+        this.graphClient.api('/devices').select('id,accountEnabled,approximateLastSignInDateTime').top(500).get()
+      ]);
+
+      const users = usersResponse.status === 'fulfilled' ? usersResponse.value.value : [];
+      const devices = devicesResponse.status === 'fulfilled' ? devicesResponse.value.value : [];
+      
+      const activeUsers = users.filter((user: GraphUser) => user.accountEnabled).length;
+      const totalUsers = users.length;
+      const activeDevices = devices.filter((device: GraphDevice) => device.accountEnabled).length;
+
+      return {
+        totalUsers,
+        activeUsers,
+        activeDevices,
+        userGrowthRate: this.calculateGrowthRate(users),
+        organizationInfo: orgResponse.status === 'fulfilled' ? orgResponse.value.value[0] : null
+      };
+    } catch (error) {
+      console.error('Error fetching organization statistics:', error);
+      throw error;
+    }
+  }
+
+  async getSignInLogs(days: number = 30) {
+    if (!this.graphClient) throw new Error('Graph client not initialized');
+    
+    try {
+      const startDate = new Date();
+      startDate.setDate(startDate.getDate() - days);
+      
+      const response = await this.graphClient
+        .api('/auditLogs/signIns')
+        .filter(`createdDateTime ge ${startDate.toISOString()}`)
+        .select('id,createdDateTime,status,userDisplayName,appDisplayName,riskLevel')
+        .top(1000)
+        .orderby('createdDateTime desc')
+        .get();
+      
+      return response.value;
+    } catch (error) {
+      console.error('Error fetching sign-in logs:', error);
+      // Return empty array if sign-in logs are not accessible
+      return [];
+    }
+  }
+
+  async getSecurityScore() {
+    if (!this.graphClient) throw new Error('Graph client not initialized');
+    
+    try {
+      const response = await this.graphClient
+        .api('/security/secureScores')
+        .select('id,createdDateTime,currentScore,maxScore,averageComparativeScores')
+        .top(30)
+        .orderby('createdDateTime desc')
+        .get();
+      
+      return response.value;
+    } catch (error) {
+      console.error('Error fetching security scores:', error);
+      // Return empty array if security scores are not accessible
+      return [];
+    }
+  }
+
+  async getPolicyTrends(days: number = 30) {
+    if (!this.graphClient) throw new Error('Graph client not initialized');
+    
+    try {
+      // Microsoft Graph audit logs are only available for the last 30 days
+      const maxDays = Math.min(days, 30);
+      const startDate = new Date();
+      startDate.setDate(startDate.getDate() - maxDays);
+      
+      console.log(`📊 Fetching policy trends for last ${maxDays} days (from ${startDate.toISOString()})`);
+      
+      const response = await this.graphClient
+        .api('/auditLogs/directoryAudits')
+        .filter(`activityDateTime ge ${startDate.toISOString()} and category eq 'Policy'`)
+        .select('id,activityDisplayName,activityDateTime,result')
+        .top(1000)
+        .orderby('activityDateTime desc')
+        .get();
+      
+      console.log(`✅ Found ${response.value?.length || 0} audit log entries`);
+      return response.value;
+    } catch (error) {
+      console.error('Error fetching policy trends:', error);
+      return [];
+    }
+  }
+
+  async getSecurityRecommendations() {
+    if (!this.graphClient) throw new Error('Graph client not initialized');
+    
+    try {
+      const response = await this.graphClient
+        .api('/security/secureScoreControlProfiles')
+        .select('id,title,implementationCost,userImpact,complianceInformation,actionType,controlStateUpdates')
+        .top(20)
+        .get();
+      
+      return response.value.map((rec: GraphSecurityRecommendation) => ({
+        id: rec.id,
+        title: rec.title,
+        impact: this.mapRecommendationImpact(rec.userImpact || 'Medium'),
+        status: this.mapRecommendationStatus(rec.controlStateUpdates || []),
+        implementationCost: rec.implementationCost,
+        actionType: rec.actionType
+      }));
+    } catch (error) {
+      console.error('Error fetching security recommendations:', error);
+      // Return sample recommendations if API is not accessible
+      return this.getFallbackRecommendations();
+    }
+  }
+
+  private calculateGrowthRate(users: GraphUser[]): number {
+    // Calculate user growth rate based on creation dates
+    const now = new Date();
+    const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+    
+    const recentUsers = users.filter(user => 
+      user.createdDateTime && new Date(user.createdDateTime) > thirtyDaysAgo
+    ).length;
+    
+    return users.length > 0 ? (recentUsers / users.length) * 100 : 0;
+  }
+
+  private mapRecommendationImpact(impact: string): string {
+    switch (impact?.toLowerCase()) {
+      case 'high': return 'High';
+      case 'medium': return 'Medium';
+      case 'low': return 'Low';
+      default: return 'Medium';
+    }
+  }
+
+  private mapRecommendationStatus(updates: Array<{ assignedTo?: string }>): string {
+    if (!updates || updates.length === 0) return 'Not Started';
+    
+    const latestUpdate = updates[updates.length - 1];
+    switch (latestUpdate.assignedTo?.toLowerCase()) {
+      case 'completed': return 'Completed';
+      case 'inprogress': return 'In Progress';
+      default: return 'Pending';
+    }
+  }
+
+  private getFallbackRecommendations() {
+    return [
+      { id: '1', title: 'Enable Multi-Factor Authentication', impact: 'High', status: 'Pending' },
+      { id: '2', title: 'Update Data Loss Prevention Policies', impact: 'Medium', status: 'In Progress' },
+      { id: '3', title: 'Review Guest User Access', impact: 'High', status: 'Pending' },
+      { id: '4', title: 'Configure Conditional Access', impact: 'Critical', status: 'Not Started' },
+      { id: '5', title: 'Update Mobile Device Management', impact: 'Medium', status: 'Completed' }
+    ];
+  }
+
+  private mapUserRole(jobTitle: string): string {
+    if (!jobTitle) return 'Viewer';
+    
+    const title = jobTitle.toLowerCase();
+    if (title.includes('admin') || title.includes('administrator')) {
+      if (title.includes('global') || title.includes('tenant')) return 'Global Admin';
+      if (title.includes('security')) return 'Security Admin';
+      if (title.includes('compliance')) return 'Compliance Admin';
+      return 'User Admin';
+    }
+    return 'Viewer';
+  }
+
+  private mapLogSeverity(result?: { resultType?: string }): string {
+    if (result?.resultType === 'success') return 'Success';
+    if (result?.resultType === 'failure') return 'Error';
+    return 'Info';
+  }
+
+  // Policy Backup and Restore Methods
+  async createPolicyBackup(name: string, description: string): Promise<object> {
+    if (!this.graphClient) throw new Error('Graph client not initialized');
+    
+    try {
+      // Get all policy types
+      const [conditionalAccess, deviceCompliance] = await Promise.all([
+        this.getRawConditionalAccessPolicies(),
+        this.getRawDeviceCompliancePolicies()
+      ]);
+
+      const backup = {
+        name,
+        description,
+        createdDateTime: new Date().toISOString(),
+        snapshotDateTime: new Date().toISOString(),
+        createdBy: 'Current User', // TODO: Get current user
+        policiesCount: conditionalAccess.length + deviceCompliance.length,
+        policies: {
+          conditionalAccess,
+          deviceCompliance,
+          deviceConfiguration: [], // TODO: Add when needed
+          appProtection: [] // TODO: Add when needed
+        },
+        metadata: {
+          tenantId: 'current-tenant', // TODO: Get tenant ID
+          version: '1.0',
+          tags: ['manual-backup']
+        }
+      };
+
+      // Store backup in SharePoint Lists or another storage solution
+      // For now, we'll use browser local storage as a demo
+      const backupId = `backup_${Date.now()}`;
+      const existingBackups = JSON.parse(localStorage.getItem('policyBackups') || '[]');
+      existingBackups.push({ id: backupId, ...backup });
+      localStorage.setItem('policyBackups', JSON.stringify(existingBackups));
+
+      return { id: backupId, ...backup };
+    } catch (error) {
+      console.error('Error creating policy backup:', error);
+      throw error;
+    }
+  }
+
+  async getRawConditionalAccessPolicies(): Promise<object[]> {
+    if (!this.graphClient) throw new Error('Graph client not initialized');
+    
+    try {
+      const response = await this.graphClient
+        .api('/identity/conditionalAccess/policies')
+        .get();
+      
+      return response.value || [];
+    } catch (error) {
+      console.error('Error fetching raw conditional access policies:', error);
+      return [];
+    }
+  }
+
+  async getRawDeviceCompliancePolicies(): Promise<object[]> {
+    if (!this.graphClient) throw new Error('Graph client not initialized');
+    
+    try {
+      const response = await this.graphClient
+        .api('/deviceManagement/deviceCompliancePolicies')
+        .get();
+      
+      return response.value || [];
+    } catch (error) {
+      console.error('Error fetching raw device compliance policies:', error);
+      return [];
+    }
+  }
+
+  async listPolicyBackups(): Promise<object[]> {
+    try {
+      const backups = JSON.parse(localStorage.getItem('policyBackups') || '[]');
+      return backups.sort((a: Record<string, unknown>, b: Record<string, unknown>) => 
+        new Date(b.createdDateTime as string).getTime() - new Date(a.createdDateTime as string).getTime()
+      );
+    } catch (error) {
+      console.error('Error listing policy backups:', error);
+      return [];
+    }
+  }
+
+  async deletePolicyBackup(backupId: string): Promise<void> {
+    try {
+      const backups = JSON.parse(localStorage.getItem('policyBackups') || '[]');
+      const filteredBackups = backups.filter((backup: Record<string, unknown>) => backup.id !== backupId);
+      localStorage.setItem('policyBackups', JSON.stringify(filteredBackups));
+    } catch (error) {
+      console.error('Error deleting policy backup:', error);
+      throw error;
+    }
+  }
+
+  async restorePolicyBackup(backupId: string, selectedPolicyTypes: string[]): Promise<object> {
+    if (!this.graphClient) throw new Error('Graph client not initialized');
+    
+    try {
+      const backups = JSON.parse(localStorage.getItem('policyBackups') || '[]');
+      const backup = backups.find((b: Record<string, unknown>) => b.id === backupId);
+      
+      if (!backup) {
+        throw new Error('Backup not found');
+      }
+
+      const restoreResults = {
+        conditionalAccess: { 
+          success: 0, 
+          failed: 0, 
+          errors: [] as string[],
+          successDetails: [] as Array<{ policyName: string; policyId: string; restoreTime: string }>,
+          failedDetails: [] as Array<{ policyName: string; error: string; restoreTime: string }>
+        },
+        deviceCompliance: { 
+          success: 0, 
+          failed: 0, 
+          errors: [] as string[],
+          successDetails: [] as Array<{ policyName: string; policyId: string; restoreTime: string }>,
+          failedDetails: [] as Array<{ policyName: string; error: string; restoreTime: string }>
+        }
+      };
+
+      const restoreTime = new Date().toISOString();
+
+      // Restore Conditional Access Policies
+      if (selectedPolicyTypes.includes('conditionalAccess') && backup.policies?.conditionalAccess) {
+        for (const policy of backup.policies.conditionalAccess as Record<string, unknown>[]) {
+          try {
+            // Create a new policy with a modified name to avoid conflicts
+            const newPolicy = {
+              ...policy,
+              displayName: `${policy.displayName} (Restored ${new Date().toLocaleDateString()})`,
+              state: 'disabled' // Start disabled for safety
+            } as Record<string, unknown>;
+            delete (newPolicy as Record<string, unknown>).id; // Remove ID to create new policy
+            delete (newPolicy as Record<string, unknown>).createdDateTime;
+            delete (newPolicy as Record<string, unknown>).modifiedDateTime;
+
+            const response = await this.graphClient
+              .api('/identity/conditionalAccess/policies')
+              .post(newPolicy);
+            
+            restoreResults.conditionalAccess.success++;
+            restoreResults.conditionalAccess.successDetails.push({
+              policyName: String(policy.displayName),
+              policyId: response.id,
+              restoreTime
+            });
+          } catch (error) {
+            restoreResults.conditionalAccess.failed++;
+            const errorMessage = error instanceof Error ? error.message : String(error);
+            restoreResults.conditionalAccess.errors.push(`${policy.displayName}: ${errorMessage}`);
+            restoreResults.conditionalAccess.failedDetails.push({
+              policyName: String(policy.displayName),
+              error: errorMessage,
+              restoreTime
+            });
+          }
+        }
+      }
+
+      // Restore Device Compliance Policies
+      if (selectedPolicyTypes.includes('deviceCompliance') && backup.policies?.deviceCompliance) {
+        for (const policy of backup.policies.deviceCompliance as Record<string, unknown>[]) {
+          try {
+            const newPolicy = {
+              ...policy,
+              displayName: `${policy.displayName} (Restored ${new Date().toLocaleDateString()})`
+            } as Record<string, unknown>;
+            delete (newPolicy as Record<string, unknown>).id;
+            delete (newPolicy as Record<string, unknown>).createdDateTime;
+            delete (newPolicy as Record<string, unknown>).lastModifiedDateTime;
+
+            const response = await this.graphClient
+              .api('/deviceManagement/deviceCompliancePolicies')
+              .post(newPolicy);
+            
+            restoreResults.deviceCompliance.success++;
+            restoreResults.deviceCompliance.successDetails.push({
+              policyName: String(policy.displayName),
+              policyId: response.id,
+              restoreTime
+            });
+          } catch (error) {
+            restoreResults.deviceCompliance.failed++;
+            const errorMessage = error instanceof Error ? error.message : String(error);
+            restoreResults.deviceCompliance.errors.push(`${policy.displayName}: ${errorMessage}`);
+            restoreResults.deviceCompliance.failedDetails.push({
+              policyName: String(policy.displayName),
+              error: errorMessage,
+              restoreTime
+            });
+          }
+        }
+      }
+
+      // Save audit log
+      await this.saveRestoreAuditLog({
+        backupId,
+        backupName: String(backup.name),
+        policyTypes: selectedPolicyTypes,
+        results: restoreResults
+      });
+
+      return restoreResults;
+    } catch (error) {
+      console.error('Error restoring policy backup:', error);
+      throw error;
+    }
+  }
+
+  async saveRestoreAuditLog(restoreInfo: {
+    backupId: string;
+    backupName: string;
+    policyTypes: string[];
+    results: Record<string, unknown>;
+  }): Promise<void> {
+    try {
+      const auditLog = {
+        id: `restore_${Date.now()}`,
+        timestamp: new Date().toISOString(),
+        backupId: restoreInfo.backupId,
+        backupName: restoreInfo.backupName,
+        restoredBy: 'Current User', // TODO: Get current user
+        policyTypes: restoreInfo.policyTypes,
+        totalPolicies: Object.values(restoreInfo.results).reduce((total: number, result: unknown) => {
+          const r = result as Record<string, unknown>;
+          return total + Number(r.success) + Number(r.failed);
+        }, 0),
+        successCount: Object.values(restoreInfo.results).reduce((total: number, result: unknown) => {
+          const r = result as Record<string, unknown>;
+          return total + Number(r.success);
+        }, 0),
+        failedCount: Object.values(restoreInfo.results).reduce((total: number, result: unknown) => {
+          const r = result as Record<string, unknown>;
+          return total + Number(r.failed);
+        }, 0),
+        details: restoreInfo.results
+      };
+
+      const existingLogs = JSON.parse(localStorage.getItem('restoreAuditLogs') || '[]');
+      existingLogs.unshift(auditLog); // Add to beginning for chronological order
+      localStorage.setItem('restoreAuditLogs', JSON.stringify(existingLogs));
+    } catch (error) {
+      console.error('Error saving restore audit log:', error);
+    }
+  }
+
+  async getRestoreAuditLogs(): Promise<object[]> {
+    try {
+      const logs = JSON.parse(localStorage.getItem('restoreAuditLogs') || '[]');
+      return logs;
+    } catch (error) {
+      console.error('Error fetching restore audit logs:', error);
+      return [];
+    }
+  }
+
+  // Microsoft Intune API Methods
+  async getManagedDevices(top: number = 100) {
+    if (!this.graphClient) throw new Error('Graph client not initialized');
+    
+    try {
+      const response = await this.graphClient
+        .api('/deviceManagement/managedDevices')
+        .select('id,deviceName,managedDeviceOwnerType,enrolledDateTime,lastSyncDateTime,operatingSystem,osVersion,deviceType,complianceState,jailBroken,managementAgent,azureADRegistered,deviceEnrollmentType,emailAddress,azureADDeviceId,deviceRegistrationState,deviceCategoryDisplayName,isSupervised,exchangeAccessState,isEncrypted,userPrincipalName,model,manufacturer,imei,serialNumber,phoneNumber,userDisplayName,totalStorageSpaceInBytes,freeStorageSpaceInBytes,partnerReportedThreatState,autopilotEnrolled,joinType,managementFeatures')
+        .top(top)
+        .orderby('lastSyncDateTime desc')
+        .get();
+      
+      return response.value.map((device: GraphManagedDevice) => ({
+        id: device.id,
+        deviceName: device.deviceName || 'Unknown Device',
+        managedDeviceOwnerType: device.managedDeviceOwnerType || 'unknown',
+        enrolledDateTime: device.enrolledDateTime ? new Date(device.enrolledDateTime) : new Date(),
+        lastSyncDateTime: device.lastSyncDateTime ? new Date(device.lastSyncDateTime) : new Date(),
+        operatingSystem: device.operatingSystem || 'Unknown',
+        osVersion: device.osVersion || 'Unknown',
+        deviceType: device.deviceType || 'unknown',
+        complianceState: device.complianceState || 'unknown',
+        jailBroken: device.jailBroken || 'Unknown',
+        managementAgent: device.managementAgent || 'unknown',
+        azureADRegistered: device.azureADRegistered || false,
+        deviceEnrollmentType: device.deviceEnrollmentType || 'unknown',
+        emailAddress: device.emailAddress,
+        azureADDeviceId: device.azureADDeviceId,
+        deviceRegistrationState: device.deviceRegistrationState || 'notRegistered',
+        deviceCategoryDisplayName: device.deviceCategoryDisplayName,
+        isSupervised: device.isSupervised || false,
+        exchangeAccessState: device.exchangeAccessState || 'none',
+        exchangeAccessStateReason: device.exchangeAccessStateReason || 'none',
+        isEncrypted: device.isEncrypted || false,
+        userPrincipalName: device.userPrincipalName,
+        model: device.model,
+        manufacturer: device.manufacturer,
+        imei: device.imei,
+        serialNumber: device.serialNumber,
+        phoneNumber: device.phoneNumber,
+        userDisplayName: device.userDisplayName,
+        totalStorageSpaceInBytes: device.totalStorageSpaceInBytes,
+        freeStorageSpaceInBytes: device.freeStorageSpaceInBytes,
+        partnerReportedThreatState: device.partnerReportedThreatState || 'unknown',
+        autopilotEnrolled: device.autopilotEnrolled || false,
+        joinType: device.joinType || 'unknown',
+        managementFeatures: device.managementFeatures || 'none',
+        processorArchitecture: device.processorArchitecture || 'unknown'
+      }));
+    } catch (error) {
+      console.error('Error fetching managed devices:', error);
+      throw error;
+    }
+  }
+
+  async getMobileApps(top: number = 100) {
+    if (!this.graphClient) throw new Error('Graph client not initialized');
+    
+    try {
+      const response = await this.graphClient
+        .api('/deviceAppManagement/mobileApps')
+        .select('id,displayName,description,publisher,createdDateTime,lastModifiedDateTime,isFeatured,privacyInformationUrl,informationUrl,owner,developer,notes,uploadState,publishingState,isAssigned,roleScopeTagIds,dependentAppCount,supersedingAppCount,supersededAppCount,appAvailability')
+        .top(top)
+        .orderby('lastModifiedDateTime desc')
+        .get();
+      
+      return response.value.map((app: GraphMobileApp) => ({
+        id: app.id,
+        displayName: app.displayName || 'Unknown App',
+        description: app.description,
+        publisher: app.publisher,
+        createdDateTime: app.createdDateTime ? new Date(app.createdDateTime) : new Date(),
+        lastModifiedDateTime: app.lastModifiedDateTime ? new Date(app.lastModifiedDateTime) : new Date(),
+        isFeatured: app.isFeatured || false,
+        privacyInformationUrl: app.privacyInformationUrl,
+        informationUrl: app.informationUrl,
+        owner: app.owner,
+        developer: app.developer,
+        notes: app.notes,
+        uploadState: app.uploadState || 'success',
+        publishingState: app.publishingState || 'notPublished',
+        isAssigned: app.isAssigned || false,
+        roleScopeTagIds: app.roleScopeTagIds || [],
+        dependentAppCount: app.dependentAppCount || 0,
+        supersedingAppCount: app.supersedingAppCount || 0,
+        supersededAppCount: app.supersededAppCount || 0,
+        appAvailability: app.appAvailability || 'lineOfBusiness'
+      }));
+    } catch (error) {
+      console.error('Error fetching mobile apps:', error);
+      throw error;
+    }
+  }
+
+  async getIntuneDeviceCompliancePolicies() {
+    if (!this.graphClient) throw new Error('Graph client not initialized');
+    
+    try {
+      const response = await this.graphClient
+        .api('/deviceManagement/deviceCompliancePolicies')
+        .select('id,displayName,description,createdDateTime,lastModifiedDateTime,version,roleScopeTagIds')
+        .expand('assignments,deviceStatuses($select=id,deviceDisplayName,status,lastReportedDateTime),userStatuses($select=id,userDisplayName,status,lastReportedDateTime),deviceStatusOverview,userStatusOverview')
+        .get();
+      
+      return response.value.map((policy: GraphIntunePolicy) => ({
+        id: policy.id,
+        displayName: policy.displayName || 'Unknown Policy',
+        description: policy.description,
+        createdDateTime: policy.createdDateTime ? new Date(policy.createdDateTime) : new Date(),
+        lastModifiedDateTime: policy.lastModifiedDateTime ? new Date(policy.lastModifiedDateTime) : new Date(),
+        version: policy.version || 1,
+        assignments: policy.assignments || [],
+        deviceStatuses: policy.deviceStatuses || [],
+        userStatuses: policy.userStatuses || [],
+        deviceStatusOverview: policy.deviceStatusOverview,
+        userStatusOverview: policy.userStatusOverview,
+        roleScopeTagIds: policy.roleScopeTagIds || []
+      }));
+    } catch (error) {
+      console.error('Error fetching Intune device compliance policies:', error);
+      throw error;
+    }
+  }
+
+  async getDeviceConfigurations() {
+    if (!this.graphClient) throw new Error('Graph client not initialized');
+    
+    try {
+      const response = await this.graphClient
+        .api('/deviceManagement/deviceConfigurations')
+        .select('id,displayName,description,createdDateTime,lastModifiedDateTime,version,roleScopeTagIds')
+        .expand('assignments,deviceStatuses($select=id,deviceDisplayName,status,lastReportedDateTime),userStatuses($select=id,userDisplayName,status,lastReportedDateTime),deviceStatusOverview,userStatusOverview')
+        .get();
+      
+      return response.value.map((config: GraphIntunePolicy) => ({
+        id: config.id,
+        displayName: config.displayName || 'Unknown Configuration',
+        description: config.description,
+        createdDateTime: config.createdDateTime ? new Date(config.createdDateTime) : new Date(),
+        lastModifiedDateTime: config.lastModifiedDateTime ? new Date(config.lastModifiedDateTime) : new Date(),
+        version: config.version || 1,
+        assignments: config.assignments || [],
+        deviceStatuses: config.deviceStatuses || [],
+        userStatuses: config.userStatuses || [],
+        deviceStatusOverview: config.deviceStatusOverview,
+        userStatusOverview: config.userStatusOverview,
+        roleScopeTagIds: config.roleScopeTagIds || []
+      }));
+    } catch (error) {
+      console.error('Error fetching device configurations:', error);
+      throw error;
+    }
+  }
+
+  async getAppProtectionPolicies() {
+    if (!this.graphClient) throw new Error('Graph client not initialized');
+    
+    try {
+      const response = await this.graphClient
+        .api('/deviceAppManagement/managedAppPolicies')
+        .select('id,displayName,description,createdDateTime,lastModifiedDateTime,version,isAssigned,roleScopeTagIds,targetedAppManagementLevels,appGroupType')
+        .expand('assignments,apps')
+        .get();
+      
+      return response.value.map((policy: GraphIntunePolicy) => ({
+        id: policy.id,
+        displayName: policy.displayName || 'Unknown Policy',
+        description: policy.description,
+        createdDateTime: policy.createdDateTime ? new Date(policy.createdDateTime) : new Date(),
+        lastModifiedDateTime: policy.lastModifiedDateTime ? new Date(policy.lastModifiedDateTime) : new Date(),
+        version: policy.version,
+        isAssigned: policy.isAssigned || false,
+        roleScopeTagIds: policy.roleScopeTagIds || [],
+        targetedAppManagementLevels: policy.targetedAppManagementLevels || 'unspecified',
+        appGroupType: policy.appGroupType || 'selectedPublicApps',
+        assignments: policy.assignments || [],
+        apps: policy.apps || []
+      }));
+    } catch (error) {
+      console.error('Error fetching app protection policies:', error);
+      throw error;
+    }
+  }
+
+  async getIntuneReports() {
+    if (!this.graphClient) throw new Error('Graph client not initialized');
+    
+    try {
+      // Get device compliance summary
+      const [devices, apps] = await Promise.allSettled([
+        this.getManagedDevices(1000),
+        this.getMobileApps(1000)
+      ]);
+
+      const deviceData = devices.status === 'fulfilled' ? devices.value : [];
+      const appData = apps.status === 'fulfilled' ? apps.value : [];
+
+      // Calculate device compliance metrics
+      const totalDevices = deviceData.length;
+      const compliantDevices = deviceData.filter((d: DeviceData) => d.complianceState === 'compliant').length;
+      const nonCompliantDevices = deviceData.filter((d: DeviceData) => d.complianceState === 'noncompliant').length;
+      const errorDevices = deviceData.filter((d: DeviceData) => d.complianceState === 'error').length;
+      const unknownDevices = deviceData.filter((d: DeviceData) => d.complianceState === 'unknown').length;
+
+      // Calculate device platform distribution
+      const devicesByPlatform = deviceData.reduce((acc: { windows: number; iOS: number; android: number; macOS: number; other: number }, device: DeviceData) => {
+        const os = device.operatingSystem?.toLowerCase() || 'other';
+        if (os.includes('windows')) acc.windows++;
+        else if (os.includes('ios')) acc.iOS++;
+        else if (os.includes('android')) acc.android++;
+        else if (os.includes('macos') || os.includes('mac')) acc.macOS++;
+        else acc.other++;
+        return acc;
+      }, { windows: 0, iOS: 0, android: 0, macOS: 0, other: 0 });
+
+      // Calculate app installation metrics (simulated)
+      const totalApps = appData.length;
+      const assignedApps = appData.filter((a: AppData) => a.isAssigned).length;
+
+      return {
+        deviceComplianceReport: {
+          reportName: 'Device Compliance Summary',
+          totalDevices,
+          compliantDevices,
+          nonCompliantDevices,
+          errorDevices,
+          unknownDevices,
+          complianceRate: totalDevices > 0 ? Math.round((compliantDevices / totalDevices) * 100) : 0
+        },
+        appInstallationReport: {
+          reportName: 'App Installation Summary',
+          totalApps,
+          successfulInstalls: Math.round(assignedApps * 0.85), // Simulated
+          failedInstalls: Math.round(assignedApps * 0.10), // Simulated
+          pendingInstalls: Math.round(assignedApps * 0.05), // Simulated
+          installationRate: assignedApps > 0 ? 85 : 0 // Simulated
+        },
+        deviceInventoryReport: {
+          reportName: 'Device Inventory Summary',
+          totalDevices,
+          enrolledDevices: totalDevices,
+          activeDevices: deviceData.filter((d: DeviceData) => {
+            const lastSync = new Date(d.lastSyncDateTime);
+            const threeDaysAgo = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000);
+            return lastSync > threeDaysAgo;
+          }).length,
+          inactiveDevices: deviceData.filter((d: DeviceData) => {
+            const lastSync = new Date(d.lastSyncDateTime);
+            const threeDaysAgo = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000);
+            return lastSync <= threeDaysAgo;
+          }).length,
+          devicesByPlatform
+        }
+      };
+    } catch (error) {
+      console.error('Error fetching Intune reports:', error);
+      throw error;
+    }
+  }
+
+  // Device Management Actions
+  async syncManagedDevice(deviceId: string) {
+    if (!this.graphClient) throw new Error('Graph client not initialized');
+    
+    try {
+      await this.graphClient
+        .api(`/deviceManagement/managedDevices/${deviceId}/syncDevice`)
+        .post({});
+      
+      return { success: true, message: 'Device sync initiated' };
+    } catch (error) {
+      console.error('Error syncing device:', error);
+      throw error;
+    }
+  }
+
+  async retireManagedDevice(deviceId: string) {
+    if (!this.graphClient) throw new Error('Graph client not initialized');
+    
+    try {
+      await this.graphClient
+        .api(`/deviceManagement/managedDevices/${deviceId}/retire`)
+        .post({});
+      
+      return { success: true, message: 'Device retirement initiated' };
+    } catch (error) {
+      console.error('Error retiring device:', error);
+      throw error;
+    }
+  }
+
+  async wipeManagedDevice(deviceId: string, keepEnrollmentData: boolean = false) {
+    if (!this.graphClient) throw new Error('Graph client not initialized');
+    
+    try {
+      await this.graphClient
+        .api(`/deviceManagement/managedDevices/${deviceId}/wipe`)
+        .post({
+          keepEnrollmentData,
+          keepUserData: false
+        });
+      
+      return { success: true, message: 'Device wipe initiated' };
+    } catch (error) {
+      console.error('Error wiping device:', error);
+      throw error;
+    }
+  }
+
+  async lockManagedDevice(deviceId: string) {
+    if (!this.graphClient) throw new Error('Graph client not initialized');
+    
+    try {
+      await this.graphClient
+        .api(`/deviceManagement/managedDevices/${deviceId}/remoteLock`)
+        .post({});
+      
+      return { success: true, message: 'Device lock initiated' };
+    } catch (error) {
+      console.error('Error locking device:', error);
+      throw error;
+    }
+  }
+
+  async resetPasscodeManagedDevice(deviceId: string) {
+    if (!this.graphClient) throw new Error('Graph client not initialized');
+    
+    try {
+      await this.graphClient
+        .api(`/deviceManagement/managedDevices/${deviceId}/resetPasscode`)
+        .post({});
+      
+      return { success: true, message: 'Passcode reset initiated' };
+    } catch (error) {
+      console.error('Error resetting passcode:', error);
+      throw error;
+    }
+  }
+
+  // Device Configuration Policy Methods
+  async getDeviceConfigurationPolicies(top: number = 100) {
+    console.log('getDeviceConfigurationPolicies called with top:', top);
+    console.log('Graph client initialized:', !!this.graphClient);
+    
+    if (!this.graphClient) throw new Error('Graph client not initialized');
+    
+    try {
+      const response = await this.graphClient
+        .api('/deviceManagement/deviceConfigurations')
+        .select('id,displayName,description,createdDateTime,lastModifiedDateTime,version,platformType,roleScopeTagIds')
+        .top(top)
+        .orderby('lastModifiedDateTime desc')
+        .get();
+      
+      console.log('Device Configuration Policies Response:', response);
+      
+        return response.value.map((policy: GraphDeviceConfigurationPolicy) => ({
+        id: policy.id,
+        displayName: policy.displayName || 'Unknown Policy',
+        description: policy.description,
+        createdDateTime: policy.createdDateTime ? new Date(policy.createdDateTime) : new Date(),
+        lastModifiedDateTime: policy.lastModifiedDateTime ? new Date(policy.lastModifiedDateTime) : new Date(),
+        version: policy.version || 1,
+        '@odata.type': policy['@odata.type'] || '#microsoft.graph.deviceConfiguration',
+        platformType: policy.platformType || 'unknown',
+        roleScopeTagIds: policy.roleScopeTagIds || [],
+        configurationCategory: this.getConfigurationCategory(policy['@odata.type']),
+        technologies: policy.technologies || [],
+        deviceStatusOverview: {
+          pendingCount: 0,
+          notApplicableCount: 0,
+          notApplicablePlatformCount: 0,
+          successCount: 0,
+          errorCount: 0,
+          failedCount: 0,
+          conflictCount: 0,
+          configurationVersion: policy.version || 1
+        },
+        userStatusOverview: {
+          pendingCount: 0,
+          notApplicableCount: 0,
+          successCount: 0,
+          errorCount: 0,
+          failedCount: 0,
+          conflictCount: 0,
+          configurationVersion: policy.version || 1
+        },
+        deviceStatuses: [],
+        userStatuses: [],
+        assignments: []
+      }));
+    } catch (error) {
+      console.error('Error fetching device configuration policies:', error);
+      // Return empty array instead of throwing to prevent UI from breaking
+      return [];
+    }
+  }
+
+  async getSettingsCatalogPolicies(top: number = 100) {
+    console.log('🔍 Starting comprehensive Device Configuration Policies fetch');
+    console.log('Graph client initialized:', !!this.graphClient);
+    console.log('Graph client details:', this.graphClient ? 'Available' : 'Not available');
+    
+    if (!this.graphClient) {
+      console.error('❌ Graph client not initialized - attempting to initialize...');
+      try {
+        await this.initialize();
+        console.log('✅ Graph client initialization attempted');
+      } catch (initError) {
+        console.error('❌ Failed to initialize Graph client:', initError);
+        throw new Error('Graph client not initialized and initialization failed');
+      }
+    }
+    
+    if (!this.graphClient) {
+      throw new Error('Graph client still not available after initialization attempt');
+    }
+
+    // Test basic connectivity
+    try {
+      console.log('🔗 Testing basic Graph connectivity...');
+      const testResponse = await this.graphClient.api('/me').get();
+      console.log('✅ Graph connectivity test successful:', testResponse.displayName);
+    } catch (connectivityError) {
+      console.error('❌ Graph connectivity test failed:', connectivityError);
+      throw new Error('Graph client authentication failed');
+    }
+    
+    try {
+      const allPolicies: (DeviceConfigurationPolicy & { name: string; platforms: string; technologies: string; isAssigned: boolean; settingCount: number; settings: unknown[]; policyType: string })[] = [];
+      
+      // 1. Device Configuration Profiles - Main working endpoint
+      try {
+        console.log('� Fetching Device Configuration Profiles...');
+        const deviceConfigResponse = await this.graphClient
+          .api('/deviceManagement/deviceConfigurations')
+          .select('id,displayName,description,createdDateTime,lastModifiedDateTime,@odata.type,version')
+          .top(top)
+          .orderby('lastModifiedDateTime desc')
+          .get();
+        
+        console.log('✅ Device Configuration Profiles:', deviceConfigResponse?.value?.length || 0, 'profiles');
+        console.log('� Full Device Configuration Response:', deviceConfigResponse);
+        
+        if (deviceConfigResponse?.value?.length > 0) {
+          const deviceConfigPolicies = deviceConfigResponse.value.map((config: Record<string, unknown>) => ({
+            id: config.id as string,
+            name: (config.displayName as string) || 'Unknown Configuration',
+            displayName: (config.displayName as string) || 'Unknown Configuration',
+            description: (config.description as string) || '',
+            createdDateTime: config.createdDateTime ? new Date(config.createdDateTime as string) : new Date(),
+            lastModifiedDateTime: config.lastModifiedDateTime ? new Date(config.lastModifiedDateTime as string) : new Date(),
+            '@odata.type': (config['@odata.type'] as string) || '#microsoft.graph.deviceConfiguration',
+            platforms: this.extractPlatformFromODataType(config['@odata.type'] as string),
+            technologies: 'mdm',
+            isAssigned: false,
+            settingCount: 0,
+            roleScopeTagIds: [],
+            settings: [],
+            assignments: [],
+            policyType: this.getPolicyTypeName(config['@odata.type'] as string)
+          }));
+          allPolicies.push(...deviceConfigPolicies);
+          console.log('✅ Added', deviceConfigPolicies.length, 'Device Configuration policies');
+        }
+      } catch (error) {
+        console.warn('⚠️ Device Configuration Profiles endpoint failed:', error);
+      }
+
+      // 2. Device Compliance Policies - Working v1.0 endpoint
+      try {
+        console.log('📋 Fetching Device Compliance Policies...');
+        const deviceComplianceResponse = await this.graphClient
+          .api('/deviceManagement/deviceCompliancePolicies')
+          .select('id,displayName,description,createdDateTime,lastModifiedDateTime,@odata.type,version')
+          .top(top)
+          .orderby('lastModifiedDateTime desc')
+          .get();
+        
+        console.log('✅ Device Compliance Policies:', deviceComplianceResponse?.value?.length || 0, 'policies');
+        console.log('📋 Full Device Compliance Response:', deviceComplianceResponse);
+        
+        if (deviceComplianceResponse?.value?.length > 0) {
+          const deviceCompliancePolicies = deviceComplianceResponse.value.map((policy: Record<string, unknown>) => ({
+            id: policy.id as string,
+            name: (policy.displayName as string) || 'Unknown Compliance Policy',
+            displayName: (policy.displayName as string) || 'Unknown Compliance Policy',
+            description: (policy.description as string) || '',
+            createdDateTime: policy.createdDateTime ? new Date(policy.createdDateTime as string) : new Date(),
+            lastModifiedDateTime: policy.lastModifiedDateTime ? new Date(policy.lastModifiedDateTime as string) : new Date(),
+            '@odata.type': (policy['@odata.type'] as string) || '#microsoft.graph.deviceCompliancePolicy',
+            platforms: this.extractPlatformFromODataType(policy['@odata.type'] as string),
+            technologies: 'mdm',
+            isAssigned: false,
+            settingCount: 0,
+            roleScopeTagIds: [],
+            settings: [],
+            assignments: [],
+            policyType: 'Device Compliance'
+          }));
+          allPolicies.push(...deviceCompliancePolicies);
+          console.log('✅ Added', deviceCompliancePolicies.length, 'Device Compliance policies');
+        }
+      } catch (error) {
+        console.warn('⚠️ Device Compliance Policies endpoint failed:', error);
+      }
+        console.log('📱 Fetching Device Configuration Profiles (Legacy)...');
+        const deviceConfigResponse = await this.graphClient
+          .api('/deviceManagement/deviceConfigurations')
+          .select('id,displayName,description,deviceManagementApplicabilityRuleOsEdition,deviceManagementApplicabilityRuleOsVersion,deviceManagementApplicabilityRuleDeviceMode,createdDateTime,lastModifiedDateTime')
+          .top(top)
+          .orderby('lastModifiedDateTime desc')
+          .get();
+        
+        console.log('✅ Device Configuration Profiles:', deviceConfigResponse?.value?.length || 0, 'profiles');
+        
+        if (deviceConfigResponse?.value?.length > 0) {
+          const deviceConfigPolicies = deviceConfigResponse.value.map((config: GraphDeviceConfigurationPolicy) => ({
+            id: config.id,
+            name: config.displayName || 'Unknown Configuration',
+            displayName: config.displayName || 'Unknown Configuration',
+            description: config.description,
+            createdDateTime: config.createdDateTime ? new Date(config.createdDateTime) : new Date(),
+            lastModifiedDateTime: config.lastModifiedDateTime ? new Date(config.lastModifiedDateTime) : new Date(),
+            '@odata.type': config['@odata.type'] || '#microsoft.graph.deviceConfiguration',
+            platforms: this.extractPlatformFromODataType(config['@odata.type']),
+            technologies: 'mdm',
+            isAssigned: false,
+            settingCount: 0,
+            roleScopeTagIds: [],
+            settings: [],
+            assignments: [],
+            policyType: 'Device Configuration'
+          }));
+          allPolicies.push(...deviceConfigPolicies);
+        }
+      } catch (error) {
+        console.warn('⚠️ Device Configuration Profiles endpoint failed:', error);
+      }
+
+      console.log(`📊 Total policies found across all endpoints: ${allPolicies.length}`);
+      console.log(' Breakdown by type:', {
+        'Device Configuration': allPolicies.filter(p => p.policyType.includes('Configuration') || p.policyType.includes('Windows') || p.policyType.includes('Android') || p.policyType.includes('iOS') || p.policyType.includes('macOS')).length,
+        'Device Compliance': allPolicies.filter(p => p.policyType === 'Device Compliance').length
+      });
+
+      // If no policies found, let's test basic device management access
+      if (allPolicies.length === 0) {
+        console.log(' No policies found - testing basic device management access...');
+        
+        try {
+          const testDeviceConfigs = await this.graphClient.api('/deviceManagement/deviceConfigurations').get();
+          console.log(' Raw deviceConfigurations test:', testDeviceConfigs);
+        } catch (testError) {
+          console.log(' deviceConfigurations test failed:', testError);
+        }
+
+        try {
+          const testDeviceCompliance = await this.graphClient.api('/deviceManagement/deviceCompliancePolicies').get();
+          console.log(' Raw deviceCompliancePolicies test:', testDeviceCompliance);
+        } catch (testError) {
+          console.log(' deviceCompliancePolicies test failed:', testError);
+        }
+
+        try {
+          const testDeviceManagement = await this.graphClient.api('/deviceManagement').get();
+          console.log(' Raw deviceManagement test:', testDeviceManagement);
+        } catch (testError) {
+          console.log(' deviceManagement test failed:', testError);
+        }
+      }
+
+      return allPolicies;
+    } catch (error) {
+      console.error(' Error fetching Device Configuration Policies:', error);
+      throw error;
+    }
+  }
+
+  async getDeviceCompliancePolicies(top: number = 100) {
+    console.log('getDeviceCompliancePolicies called with top:', top);
+    console.log('Graph client initialized:', !!this.graphClient);
+    
+    if (!this.graphClient) throw new Error('Graph client not initialized');
+    
+    try {
+      const response = await this.graphClient
+        .api('/deviceManagement/deviceCompliancePolicies')
+        .select('id,displayName,description,createdDateTime,lastModifiedDateTime,version')
+        .top(top)
+        .orderby('lastModifiedDateTime desc')
+        .get();
+      
+      console.log('Device Compliance Policies Response:', response);
+      
+      return response.value.map((policy: GraphDeviceCompliancePolicy) => ({
+        id: policy.id,
+        displayName: policy.displayName || 'Unknown Policy',
+        description: policy.description,
+        createdDateTime: policy.createdDateTime ? new Date(policy.createdDateTime) : new Date(),
+        lastModifiedDateTime: policy.lastModifiedDateTime ? new Date(policy.lastModifiedDateTime) : new Date(),
+        version: policy.version || 1,
+        assignments: [],
+        scheduledActionsForRule: []
+      }));
+    } catch (error: unknown) {
+      console.error('Error fetching device compliance policies:', error);
+      // Return empty array instead of throwing to prevent UI from breaking
+      return [];
+    }
+  }
+
+  async getDeviceConfigurationPolicyAssignments(policyId: string) {
+    if (!this.graphClient) throw new Error('Graph client not initialized');
+    
+    try {
+      const response = await this.graphClient
+        .api(/deviceManagement/deviceConfigurations//assignments)
+        .get();
+      
+      return response.value || [];
+    } catch (error: unknown) {
+      console.error('Error fetching device configuration policy assignments:', error);
+      return [];
+    }
+  }
+
+  async getDeviceConfigurationPolicyDeviceStatuses(policyId: string) {
+    if (!this.graphClient) throw new Error('Graph client not initialized');
+    
+    try {
+      const response = await this.graphClient
+        .api(/deviceManagement/deviceConfigurations//deviceStatuses)
+        .get();
+      
+      return response.value || [];
+    } catch (error: unknown) {
+      console.error('Error fetching device configuration policy device statuses:', error);
+      return [];
+    }
+  }
+
+  private getConfigurationCategory(odataType: string): string {
+    if (!odataType) return 'Device Configuration';
+    
+    const type = odataType.toLowerCase();
+    if (type.includes('deviceconfiguration')) return 'Device Configuration';
+    
+    return 'Device Configuration';
+  }
+
+  private extractPlatformFromODataType(odataType?: string): string {
+    if (!odataType) return 'Unknown';
+    
+    const type = odataType.toLowerCase();
+    if (type.includes('windows')) return 'Windows';
+    if (type.includes('ios')) return 'iOS';
+    if (type.includes('android')) return 'Android';
+    if (type.includes('macos')) return 'macOS';
+    
+    return 'Cross-platform';
+  }
+
+  private getPolicyTypeName(odataType?: string): string {
+    if (!odataType) return 'Device Configuration';
+    
+    const type = odataType.toLowerCase();
+    if (type.includes('compliance')) return 'Device Compliance';
+    if (type.includes('windows')) return 'Windows Configuration';
+    if (type.includes('ios')) return 'iOS Configuration';
+    if (type.includes('android')) return 'Android Configuration';
+    if (type.includes('macos')) return 'macOS Configuration';
+    if (type.includes('deviceconfiguration')) return 'Device Configuration';
+    
+    return 'Device Configuration';
+  }
+}
+
+export const graphService = new GraphService();

@@ -13,7 +13,7 @@ export const msalConfig = {
   system: {
     allowNativeBroker: false,
     loggerOptions: {
-      loggerCallback: (level: any, message: string, containsPii: boolean) => {
+      loggerCallback: (_level: unknown, message: string, containsPii: boolean) => {
         if (containsPii) return;
         console.log(`[MSAL] ${message}`);
       },
@@ -33,9 +33,17 @@ export const loginRequest = {
     "Directory.ReadWrite.All",
     "Policy.Read.All",
     "Policy.ReadWrite.ConditionalAccess",
+    "Policy.Read.DeviceConfiguration",
     "DeviceManagementConfiguration.Read.All",
     "DeviceManagementConfiguration.ReadWrite.All",
+    "DeviceManagementManagedDevices.Read.All",
+    "DeviceManagementManagedDevices.ReadWrite.All",
+    "DeviceManagementApps.Read.All",
+    "DeviceManagementServiceConfig.Read.All",
+    "Device.Read.All",
+    "DeviceManagementRBAC.Read.All",
     "SecurityEvents.Read.All",
+    "SecurityAlert.Read.All",
     "AuditLog.Read.All",
     "Reports.Read.All"
   ],
